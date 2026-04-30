@@ -26,6 +26,7 @@ body { margin:0; background:#0b1220; color:white; font-family:sans-serif;}
     height:100%;
     background:#0f1a2e;
     padding:15px;
+    overflow:auto;
 }
 
 h2 { margin-top:0; }
@@ -44,7 +45,13 @@ button {
     background:#1e88e5;
     border:none;
     color:white;
+    cursor:pointer;
 }
+
+button:hover { background:#1565c0; }
+
+.status-ok { color:#00e676; }
+.status-bad { color:#ff5252; }
 </style>
 </head>
 
@@ -70,7 +77,9 @@ button {
 <script>
 var map = L.map('map').setView([13.75,100.5],13);
 
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
+    maxZoom:19
+}).addTo(map);
 
 var linesLayer = L.geoJSON(null, {
     style: function(f){
@@ -91,59 +100,83 @@ var switchLayer = L.geoJSON(null, {
     }
 }).addTo(map);
 
+let loading = false;   // 🔥 กันยิงซ้ำ
+
 // =========================
-function loadData(){
+async function loadData(){
+    if(loading) return;
+    loading = true;
 
-// 🔹 สายไฟ
-fetch('/api/conductor')
-.then(r=>r.json())
-.then(d=>{
-    linesLayer.clearLayers();
-    linesLayer.addData(d);
-});
+    try{
+        // 🔹 conductor
+        let r1 = await fetch('/api/conductor');
+        let d1 = await r1.json();
 
-// 🔹 switch
-fetch('/api/dof')
-.then(r=>r.json())
-.then(d=>{
-    switchLayer.clearLayers();
-    switchLayer.addData(d);
+        linesLayer.clearLayers();
+        linesLayer.addData(d1);
 
-    switchLayer.eachLayer(l=>{
-        l.on('click',()=>{
-            fetch('/toggle_switch?id='+l.feature.properties.id)
-            .then(()=>loadData());
+    }catch(e){
+        console.log("❌ conductor error", e);
+    }
+
+    try{
+        // 🔹 switch
+        let r2 = await fetch('/api/dof');
+        let d2 = await r2.json();
+
+        switchLayer.clearLayers();
+        switchLayer.addData(d2);
+
+        switchLayer.eachLayer(l=>{
+            l.on('click',()=>{
+                fetch('/toggle_switch?id='+l.feature.properties.id)
+                .then(()=>loadData());
+            });
         });
-    });
-});
 
-// 🔹 SCADA UI (สำคัญ!)
-fetch('/api/scada')
-.then(r=>r.json())
-.then(d=>{
-    document.getElementById('fault').innerHTML = "Fault: " + (d.fault_feeder || "-");
-    document.getElementById('online').innerHTML = "Online: " + d.nodes_on;
-    document.getElementById('offline').innerHTML = "Offline: " + d.nodes_off;
-    document.getElementById('switch').innerHTML = "Switch Open: " + d.switch_open;
-});
+    }catch(e){
+        console.log("❌ dof error", e);
+    }
 
+    try{
+        // 🔹 scada
+        let r3 = await fetch('/api/scada');
+        let d3 = await r3.json();
+
+        document.getElementById('fault').innerHTML = "Fault: " + (d3.fault_feeder || "-");
+        document.getElementById('online').innerHTML = "Online: " + d3.nodes_on;
+        document.getElementById('offline').innerHTML = "Offline: " + d3.nodes_off;
+        document.getElementById('switch').innerHTML = "Switch Open: " + d3.switch_open;
+
+    }catch(e){
+        console.log("❌ scada error", e);
+    }
+
+    loading = false;
 }
 
 // =========================
 // click map = fault
 map.on('click', function(e){
     fetch(`/fault?lat=${e.latlng.lat}&lon=${e.latlng.lng}`)
-    .then(()=>loadData());
+    .then(()=>loadData())
+    .catch(err=>console.log("❌ fault error", err));
 });
 
 // =========================
 // switching plan (placeholder)
 function getPlan(){
-    document.getElementById('plan').innerHTML = "กำลังพัฒนา...";
+    document.getElementById('plan').innerHTML = "กำลังคำนวณ...";
+    setTimeout(()=>{
+        document.getElementById('plan').innerHTML = "🔧 (AI Switching coming soon)";
+    },1000);
 }
 
 // =========================
-setInterval(loadData,2000);
+// 🔥 ลดโหลด (สำคัญ)
+setInterval(loadData, 5000);
+
+// initial load
 loadData();
 
 </script>
