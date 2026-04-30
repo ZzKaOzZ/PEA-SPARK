@@ -18,6 +18,15 @@ FAULT_FEEDER=None
 
 # =========================
 def load(path):
+    # รองรับทั้ง .geojson และ .json
+    if not os.path.exists(path):
+        alt = path.replace(".geojson",".json")
+        if os.path.exists(alt):
+            path = alt
+        else:
+            print("❌ FILE NOT FOUND:", path)
+            return {"features":[]}
+
     with open(path,encoding="utf-8") as f:
         return json.load(f)
 
@@ -28,7 +37,7 @@ def build():
     G=nx.Graph()
     nodes=[]
 
-    data=load("data/psconductor.json")
+    data=load("data/psconductor.geojson")
 
     for f in data["features"]:
         geom=f["geometry"]
@@ -47,10 +56,12 @@ def build():
             nodes+=[a,b]
 
     NODE_LIST=list(set(nodes))
-    TREE=KDTree(NODE_LIST)
+
+    if NODE_LIST:
+        TREE=KDTree(NODE_LIST)
 
     # SWITCH
-    dof=load("data/DOF.json")
+    dof=load("data/DOF.geojson")
 
     for f in dof["features"]:
         fid=str(f["properties"].get("FACILITYID",""))
@@ -61,15 +72,17 @@ def build():
         pos=int(f["properties"].get("PRESENTPOS",1))
         lon,lat=f["geometry"]["coordinates"]
 
-        _,i=TREE.query([lon,lat])
-
-        SWITCH_NODES[fid]=NODE_LIST[i]
-        SWITCH_STATUS[fid]=pos
+        if TREE:
+            _,i=TREE.query([lon,lat])
+            SWITCH_NODES[fid]=NODE_LIST[i]
+            SWITCH_STATUS[fid]=pos
 
     # COLOR
     palette=["#00e5ff","#7c4dff","#ff9100","#00e676","#ff5252","#ffd600"]
 
-    for i,f in enumerate(set(nx.get_edge_attributes(G,'feeder').values())):
+    feeders=set(nx.get_edge_attributes(G,'feeder').values())
+
+    for i,f in enumerate(feeders):
         FEEDER_COLOR[f]=palette[i%len(palette)]
 
 # =========================
@@ -87,14 +100,15 @@ def apply_fault():
     return G2
 
 # =========================
+# 🔥 FIX PERFORMANCE (สำคัญสุด)
 def get_active_nodes():
     G2=apply_fault()
-    active=set()
 
-    for n in G2.nodes():
-        active |= set(nx.node_connected_component(G2,n))
-
-    return active
+    try:
+        # ใช้ connected_components ครั้งเดียว
+        return set().union(*nx.connected_components(G2))
+    except:
+        return set()
 
 # =========================
 @app.route("/")
@@ -109,14 +123,15 @@ def fault():
     lat=float(request.args.get("lat"))
     lon=float(request.args.get("lon"))
 
-    _,i=TREE.query([lon,lat])
-    FAULT_NODE=NODE_LIST[i]
+    if TREE:
+        _,i=TREE.query([lon,lat])
+        FAULT_NODE=NODE_LIST[i]
 
-    FAULT_FEEDER="UNK"
-    for u,v,d in G.edges(data=True):
-        if u==FAULT_NODE or v==FAULT_NODE:
-            FAULT_FEEDER=d.get("feeder","UNK")
-            break
+        FAULT_FEEDER="UNK"
+        for u,v,d in G.edges(data=True):
+            if u==FAULT_NODE or v==FAULT_NODE:
+                FAULT_FEEDER=d.get("feeder","UNK")
+                break
 
     return jsonify({"node":str(FAULT_NODE),"feeder":FAULT_FEEDER})
 
@@ -150,9 +165,9 @@ def conductor():
 # =========================
 @app.route("/api/dof")
 def dof():
-    data=load("data/DOF.json")
-    feats=[]
+    data=load("data/DOF.geojson")
 
+    feats=[]
     for f in data["features"]:
         fid=str(f["properties"].get("FACILITYID",""))
 
@@ -166,7 +181,6 @@ def dof():
             "geometry":f["geometry"],
             "properties":{
                 "id":fid,
-                "state":"CLOSE" if pos==1 else "OPEN",
                 "status":pos
             }
         })
@@ -181,7 +195,7 @@ def toggle():
     if fid in SWITCH_STATUS:
         SWITCH_STATUS[fid]=1-SWITCH_STATUS[fid]
 
-    return jsonify({"id":fid,"status":SWITCH_STATUS[fid]})
+    return jsonify({"id":fid,"status":SWITCH_STATUS.get(fid)})
 
 # =========================
 @app.route("/api/scada")
@@ -197,7 +211,7 @@ def scada():
     })
 
 # =========================
-# 🔥 จุดสำคัญสำหรับ Render (ห้ามลืม)
+# 🔥 BUILD ตอน start (สำคัญ)
 build()
 
 # =========================
