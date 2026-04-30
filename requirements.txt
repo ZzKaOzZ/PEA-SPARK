@@ -6,3 +6,4 @@ shapely
 fiona
 pyproj
 rtree
+gunicorn
