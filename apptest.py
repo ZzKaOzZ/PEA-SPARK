@@ -23,7 +23,6 @@ def load(path):
 
 # =========================
 def build():
-
     global G,NODE_LIST,TREE
 
     G=nx.Graph()
@@ -75,7 +74,6 @@ def build():
 
 # =========================
 def apply_fault():
-
     G2=G.copy()
 
     if FAULT_NODE and FAULT_NODE in G2:
@@ -106,7 +104,6 @@ def index():
 # =========================
 @app.route("/fault")
 def fault():
-
     global FAULT_NODE,FAULT_FEEDER
 
     lat=float(request.args.get("lat"))
@@ -126,13 +123,11 @@ def fault():
 # =========================
 @app.route("/api/conductor")
 def conductor():
-
     active=get_active_nodes()
     data=load("data/psconductor.geojson")
 
     feats=[]
     for f in data["features"]:
-
         coords=f["geometry"]["coordinates"]
         feeder=str(f["properties"].get("FEEDERID","UNK"))
 
@@ -155,7 +150,6 @@ def conductor():
 # =========================
 @app.route("/api/dof")
 def dof():
-
     data=load("data/DOF.geojson")
     feats=[]
 
@@ -182,7 +176,6 @@ def dof():
 # =========================
 @app.route("/toggle_switch")
 def toggle():
-
     fid=request.args.get("id")
 
     if fid in SWITCH_STATUS:
@@ -193,7 +186,6 @@ def toggle():
 # =========================
 @app.route("/api/scada")
 def scada():
-
     active=get_active_nodes()
     total=len(NODE_LIST)
 
@@ -205,8 +197,10 @@ def scada():
     })
 
 # =========================
-if __name__=="__main__":
-    build()
+# 🔥 จุดสำคัญสำหรับ Render (ห้ามลืม)
+build()
 
+# =========================
+if __name__=="__main__":
     port=int(os.environ.get("PORT",3000))
     app.run(host="0.0.0.0",port=port)
