@@ -2,14 +2,21 @@
 <html>
 <head>
 <meta charset="utf-8">
-<title>PEA SPARK - GRIDWATCH</title>
+<title>PEA SPARK DMS</title>
 
 <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
 <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
 
 <style>
 body { margin:0; background:#0b1220; color:white; font-family:sans-serif;}
-#map { position:absolute; top:0; left:300px; right:0; bottom:0;}
+
+#map {
+    position:absolute;
+    top:0;
+    left:300px;
+    right:0;
+    bottom:0;
+}
 
 .panel {
     position:absolute;
@@ -19,23 +26,38 @@ body { margin:0; background:#0b1220; color:white; font-family:sans-serif;}
     height:100%;
     background:#0f1a2e;
     padding:15px;
-    overflow:auto;
 }
 
-.card { margin-bottom:15px; }
+h2 { margin-top:0; }
 
-button { padding:6px; margin-top:5px; width:100%; }
+.card {
+    margin-bottom:15px;
+    padding:10px;
+    background:#16243a;
+    border-radius:6px;
+}
+
+button {
+    width:100%;
+    padding:8px;
+    margin-top:5px;
+    background:#1e88e5;
+    border:none;
+    color:white;
+}
 </style>
 </head>
 
 <body>
 
 <div class="panel">
-<h2>⚡ GRIDWATCH</h2>
+<h2>⚡ GRID STATUS</h2>
 
 <div class="card">
-<div id="online">Online: --</div>
-<div id="offline">Offline: --</div>
+<div id="fault">Fault: -</div>
+<div id="online">Online: -</div>
+<div id="offline">Offline: -</div>
+<div id="switch">Switch Open: -</div>
 </div>
 
 <button onclick="getPlan()">Suggest Switching</button>
@@ -72,7 +94,7 @@ var switchLayer = L.geoJSON(null, {
 // =========================
 function loadData(){
 
-// 🔹 โหลดสายไฟ
+// 🔹 สายไฟ
 fetch('/api/conductor')
 .then(r=>r.json())
 .then(d=>{
@@ -80,7 +102,7 @@ fetch('/api/conductor')
     linesLayer.addData(d);
 });
 
-// 🔹 โหลด switch
+// 🔹 switch
 fetch('/api/dof')
 .then(r=>r.json())
 .then(d=>{
@@ -95,37 +117,29 @@ fetch('/api/dof')
     });
 });
 
-// 🔹 SCADA
+// 🔹 SCADA UI (สำคัญ!)
 fetch('/api/scada')
 .then(r=>r.json())
 .then(d=>{
-    document.getElementById('online').innerHTML="Online: "+d.nodes_on;
-    document.getElementById('offline').innerHTML="Offline: "+d.nodes_off;
+    document.getElementById('fault').innerHTML = "Fault: " + (d.fault_feeder || "-");
+    document.getElementById('online').innerHTML = "Online: " + d.nodes_on;
+    document.getElementById('offline').innerHTML = "Offline: " + d.nodes_off;
+    document.getElementById('switch').innerHTML = "Switch Open: " + d.switch_open;
 });
 
 }
 
 // =========================
-// fault click
+// click map = fault
 map.on('click', function(e){
     fetch(`/fault?lat=${e.latlng.lat}&lon=${e.latlng.lng}`)
     .then(()=>loadData());
 });
 
 // =========================
-// switching plan
+// switching plan (placeholder)
 function getPlan(){
-    fetch('/api/switch_plan')
-    .then(r=>r.json())
-    .then(d=>{
-        if(d.switch){
-            document.getElementById('plan').innerHTML =
-                "Close Switch: "+d.switch+
-                "<br>Restore: "+d.restore_nodes+" nodes";
-        }else{
-            document.getElementById('plan').innerHTML="No plan available";
-        }
-    });
+    document.getElementById('plan').innerHTML = "กำลังพัฒนา...";
 }
 
 // =========================
@@ -133,5 +147,6 @@ setInterval(loadData,2000);
 loadData();
 
 </script>
+
 </body>
 </html>
