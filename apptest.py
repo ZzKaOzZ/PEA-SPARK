@@ -50,7 +50,6 @@ def build():
         for i in range(len(coords) - 1):
             a = tuple(coords[i])
             b = tuple(coords[i + 1])
-
             G.add_edge(a, b, feeder=feeder)
             nodes += [a, b]
 
@@ -85,26 +84,38 @@ def build():
 
 # =========================
 def apply_fault():
-    G2 = G.copy()
+    try:
+        G2 = G.copy()
 
-    if FAULT_NODE and FAULT_NODE in G2:
-        G2.remove_node(FAULT_NODE)
+        if FAULT_NODE and FAULT_NODE in G2:
+            G2.remove_node(FAULT_NODE)
 
-    for fid, node in SWITCH_NODES.items():
-        if SWITCH_STATUS.get(fid, 1) == 0:
-            if node in G2:
-                G2.remove_node(node)
+        for fid, node in SWITCH_NODES.items():
+            if SWITCH_STATUS.get(fid, 1) == 0:
+                if node in G2:
+                    G2.remove_node(node)
 
-    return G2
+        return G2
+    except Exception as e:
+        print("❌ apply_fault error:", e)
+        return nx.Graph()
 
 # =========================
-# 🔥 FIX PERFORMANCE
 def get_active_nodes():
-    G2 = apply_fault()
-
     try:
-        return set().union(*nx.connected_components(G2))
-    except:
+        G2 = apply_fault()
+
+        if G2 is None or len(G2.nodes) == 0:
+            return set()
+
+        comps = list(nx.connected_components(G2))
+        if not comps:
+            return set()
+
+        return set().union(*comps)
+
+    except Exception as e:
+        print("❌ get_active_nodes error:", e)
         return set()
 
 # =========================
@@ -117,98 +128,130 @@ def index():
 def fault():
     global FAULT_NODE, FAULT_FEEDER
 
-    lat = float(request.args.get("lat"))
-    lon = float(request.args.get("lon"))
+    try:
+        lat = float(request.args.get("lat"))
+        lon = float(request.args.get("lon"))
 
-    if TREE:
-        _, i = TREE.query([lon, lat])
-        FAULT_NODE = NODE_LIST[i]
+        if TREE:
+            _, i = TREE.query([lon, lat])
+            FAULT_NODE = NODE_LIST[i]
 
-        FAULT_FEEDER = "UNK"
-        for u, v, d in G.edges(data=True):
-            if u == FAULT_NODE or v == FAULT_NODE:
-                FAULT_FEEDER = d.get("feeder", "UNK")
-                break
+            FAULT_FEEDER = "UNK"
+            for u, v, d in G.edges(data=True):
+                if u == FAULT_NODE or v == FAULT_NODE:
+                    FAULT_FEEDER = d.get("feeder", "UNK")
+                    break
 
-    return jsonify({"node": str(FAULT_NODE), "feeder": FAULT_FEEDER})
+        return jsonify({"node": str(FAULT_NODE), "feeder": FAULT_FEEDER})
+
+    except Exception as e:
+        print("❌ fault error:", e)
+        return jsonify({"node": None, "feeder": "-"})
 
 # =========================
 @app.route("/api/conductor")
 def conductor():
-    active = get_active_nodes()
-    data = load("data/psconductor.geojson")
+    try:
+        active = get_active_nodes()
+        data = load("data/psconductor.geojson")
 
-    feats = []
-    for f in data["features"]:
-        coords = f["geometry"]["coordinates"]
-        feeder = str(f["properties"].get("FEEDERID", "UNK"))
+        feats = []
+        for f in data["features"]:
+            coords = f["geometry"]["coordinates"]
+            feeder = str(f["properties"].get("FEEDERID", "UNK"))
 
-        status = "on"
-        if any(tuple(c) not in active for c in coords):
-            status = "off"
+            status = "on"
+            if any(tuple(c) not in active for c in coords):
+                status = "off"
 
-        feats.append({
-            "type": "Feature",
-            "geometry": f["geometry"],
-            "properties": {
-                "feeder": feeder,
-                "status": status,
-                "color": FEEDER_COLOR.get(feeder, "#888")
-            }
-        })
+            feats.append({
+                "type": "Feature",
+                "geometry": f["geometry"],
+                "properties": {
+                    "feeder": feeder,
+                    "status": status,
+                    "color": FEEDER_COLOR.get(feeder, "#888")
+                }
+            })
 
-    return jsonify({"type": "FeatureCollection", "features": feats})
+        return jsonify({"type": "FeatureCollection", "features": feats})
+
+    except Exception as e:
+        print("❌ conductor error:", e)
+        return jsonify({"type": "FeatureCollection", "features": []})
 
 # =========================
 @app.route("/api/dof")
 def dof():
-    data = load("data/DOF.geojson")
+    try:
+        data = load("data/DOF.geojson")
 
-    feats = []
-    for f in data["features"]:
-        fid = str(f["properties"].get("FACILITYID", ""))
+        feats = []
+        for f in data["features"]:
+            fid = str(f["properties"].get("FACILITYID", ""))
 
-        if "S" not in fid.upper():
-            continue
+            if "S" not in fid.upper():
+                continue
 
-        pos = SWITCH_STATUS.get(fid, 1)
+            pos = SWITCH_STATUS.get(fid, 1)
 
-        feats.append({
-            "type": "Feature",
-            "geometry": f["geometry"],
-            "properties": {
-                "id": fid,
-                "status": pos
-            }
-        })
+            feats.append({
+                "type": "Feature",
+                "geometry": f["geometry"],
+                "properties": {
+                    "id": fid,
+                    "status": pos
+                }
+            })
 
-    return jsonify({"type": "FeatureCollection", "features": feats})
+        return jsonify({"type": "FeatureCollection", "features": feats})
+
+    except Exception as e:
+        print("❌ dof error:", e)
+        return jsonify({"type": "FeatureCollection", "features": []})
 
 # =========================
 @app.route("/toggle_switch")
 def toggle():
-    fid = request.args.get("id")
+    try:
+        fid = request.args.get("id")
 
-    if fid in SWITCH_STATUS:
-        SWITCH_STATUS[fid] = 1 - SWITCH_STATUS[fid]
+        if fid in SWITCH_STATUS:
+            SWITCH_STATUS[fid] = 1 - SWITCH_STATUS[fid]
 
-    return jsonify({"id": fid, "status": SWITCH_STATUS.get(fid)})
+        return jsonify({"id": fid, "status": SWITCH_STATUS.get(fid)})
+
+    except Exception as e:
+        print("❌ toggle error:", e)
+        return jsonify({"id": None, "status": 0})
 
 # =========================
 @app.route("/api/scada")
 def scada():
-    active = get_active_nodes()
-    total = len(NODE_LIST)
+    try:
+        active = get_active_nodes()
+        total = len(NODE_LIST)
 
-    return jsonify({
-        "fault_feeder": FAULT_FEEDER,
-        "switch_open": sum(1 for v in SWITCH_STATUS.values() if v == 0),
-        "nodes_on": len(active),
-        "nodes_off": total - len(active)
-    })
+        return jsonify({
+            "fault_feeder": FAULT_FEEDER or "-",
+            "switch_open": sum(1 for v in SWITCH_STATUS.values() if v == 0),
+            "nodes_on": len(active),
+            "nodes_off": total - len(active)
+        })
+
+    except Exception as e:
+        print("❌ scada error:", e)
+        return jsonify({
+            "fault_feeder": "-",
+            "switch_open": 0,
+            "nodes_on": 0,
+            "nodes_off": 0
+        })
 
 # =========================
+print("🚀 BUILD GRAPH...")
 build()
+print("✅ BUILD DONE")
 
 # =========================
 if __name__ == "__main__":
