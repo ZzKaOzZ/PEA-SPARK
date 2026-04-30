@@ -5,6 +5,8 @@ from scipy.spatial import KDTree
 
 app = Flask(__name__)
 
+# =========================
+# GLOBAL
 G = None
 NODE_LIST = []
 TREE = None
@@ -15,6 +17,10 @@ FEEDER_COLOR = {}
 
 FAULT_NODE = None
 FAULT_FEEDER = None
+
+# 🔥 CACHE
+ACTIVE_CACHE = set()
+CACHE_VALID = False
 
 # =========================
 def load(path):
@@ -33,6 +39,8 @@ def load(path):
 def build():
     global G, NODE_LIST, TREE
 
+    print("🚀 BUILD GRAPH...")
+
     G = nx.Graph()
     nodes = []
 
@@ -50,6 +58,7 @@ def build():
         for i in range(len(coords) - 1):
             a = tuple(coords[i])
             b = tuple(coords[i + 1])
+
             G.add_edge(a, b, feeder=feeder)
             nodes += [a, b]
 
@@ -82,6 +91,8 @@ def build():
     for i, f in enumerate(feeders):
         FEEDER_COLOR[f] = palette[i % len(palette)]
 
+    print("✅ BUILD DONE")
+
 # =========================
 def apply_fault():
     try:
@@ -96,27 +107,40 @@ def apply_fault():
                     G2.remove_node(node)
 
         return G2
+
     except Exception as e:
         print("❌ apply_fault error:", e)
         return nx.Graph()
 
 # =========================
-def get_active_nodes():
+# 🔥 COMPUTE (หนัก)
+def compute_active_nodes():
     try:
         G2 = apply_fault()
 
         if G2 is None or len(G2.nodes) == 0:
             return set()
 
-        comps = list(nx.connected_components(G2))
-        if not comps:
-            return set()
+        active = set()
+        for comp in nx.connected_components(G2):
+            active |= comp
 
-        return set().union(*comps)
+        return active
 
     except Exception as e:
-        print("❌ get_active_nodes error:", e)
+        print("❌ compute_active_nodes error:", e)
         return set()
+
+# =========================
+# 🔥 CACHE
+def get_active_nodes():
+    global ACTIVE_CACHE, CACHE_VALID
+
+    if not CACHE_VALID:
+        ACTIVE_CACHE = compute_active_nodes()
+        CACHE_VALID = True
+
+    return ACTIVE_CACHE
 
 # =========================
 @app.route("/")
@@ -126,7 +150,7 @@ def index():
 # =========================
 @app.route("/fault")
 def fault():
-    global FAULT_NODE, FAULT_FEEDER
+    global FAULT_NODE, FAULT_FEEDER, CACHE_VALID
 
     try:
         lat = float(request.args.get("lat"))
@@ -141,6 +165,8 @@ def fault():
                 if u == FAULT_NODE or v == FAULT_NODE:
                     FAULT_FEEDER = d.get("feeder", "UNK")
                     break
+
+        CACHE_VALID = False  # 🔥 invalidate
 
         return jsonify({"node": str(FAULT_NODE), "feeder": FAULT_FEEDER})
 
@@ -213,11 +239,14 @@ def dof():
 # =========================
 @app.route("/toggle_switch")
 def toggle():
+    global CACHE_VALID
+
     try:
         fid = request.args.get("id")
 
         if fid in SWITCH_STATUS:
             SWITCH_STATUS[fid] = 1 - SWITCH_STATUS[fid]
+            CACHE_VALID = False  # 🔥 invalidate
 
         return jsonify({"id": fid, "status": SWITCH_STATUS.get(fid)})
 
@@ -249,9 +278,7 @@ def scada():
         })
 
 # =========================
-print("🚀 BUILD GRAPH...")
 build()
-print("✅ BUILD DONE")
 
 # =========================
 if __name__ == "__main__":
