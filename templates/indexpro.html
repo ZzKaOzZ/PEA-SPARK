@@ -10,6 +10,7 @@
 <style>
 body { margin:0; background:#0b1220; color:white; font-family:sans-serif;}
 #map { position:absolute; top:0; left:300px; right:0; bottom:0;}
+
 .panel {
     position:absolute;
     left:0;
@@ -18,9 +19,12 @@ body { margin:0; background:#0b1220; color:white; font-family:sans-serif;}
     height:100%;
     background:#0f1a2e;
     padding:15px;
+    overflow:auto;
 }
+
 .card { margin-bottom:15px; }
-button { padding:6px; margin-top:5px;}
+
+button { padding:6px; margin-top:5px; width:100%; }
 </style>
 </head>
 
@@ -30,9 +34,12 @@ button { padding:6px; margin-top:5px;}
 <h2>⚡ GRIDWATCH</h2>
 
 <div class="card">
-<div id="online">--</div>
-<div id="offline">--</div>
+<div id="online">Online: --</div>
+<div id="offline">Offline: --</div>
 </div>
+
+<button onclick="getPlan()">Suggest Switching</button>
+<div id="plan"></div>
 
 </div>
 
@@ -43,22 +50,40 @@ var map = L.map('map').setView([13.75,100.5],13);
 
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
 
-var linesLayer = L.geoJSON().addTo(map);
-var switchLayer = L.geoJSON().addTo(map);
+var linesLayer = L.geoJSON(null, {
+    style: function(f){
+        return {
+            color: f.properties.status==="on"?f.properties.color:"#555",
+            weight:3
+        }
+    }
+}).addTo(map);
+
+var switchLayer = L.geoJSON(null, {
+    pointToLayer: function(f, latlng){
+        return L.circleMarker(latlng,{
+            radius:6,
+            color: f.properties.status==1?"#00e5ff":"#ff5252",
+            fillOpacity:1
+        });
+    }
+}).addTo(map);
 
 // =========================
 function loadData(){
 
-fetch('/api/conductor').then(r=>r.json()).then(d=>{
+// 🔹 โหลดสายไฟ
+fetch('/api/conductor')
+.then(r=>r.json())
+.then(d=>{
     linesLayer.clearLayers();
     linesLayer.addData(d);
-    linesLayer.setStyle(f=>({
-        color: f.properties.status==="on"?f.properties.color:"#555",
-        weight:3
-    }));
 });
 
-fetch('/api/dof').then(r=>r.json()).then(d=>{
+// 🔹 โหลด switch
+fetch('/api/dof')
+.then(r=>r.json())
+.then(d=>{
     switchLayer.clearLayers();
     switchLayer.addData(d);
 
@@ -70,18 +95,40 @@ fetch('/api/dof').then(r=>r.json()).then(d=>{
     });
 });
 
-fetch('/api/scada').then(r=>r.json()).then(d=>{
-    document.getElementById('online').innerHTML="Online: "+d.cust_online;
-    document.getElementById('offline').innerHTML="Offline: "+d.cust_offline;
+// 🔹 SCADA
+fetch('/api/scada')
+.then(r=>r.json())
+.then(d=>{
+    document.getElementById('online').innerHTML="Online: "+d.nodes_on;
+    document.getElementById('offline').innerHTML="Offline: "+d.nodes_off;
 });
 
 }
 
+// =========================
+// fault click
 map.on('click', function(e){
     fetch(`/fault?lat=${e.latlng.lat}&lon=${e.latlng.lng}`)
     .then(()=>loadData());
 });
 
+// =========================
+// switching plan
+function getPlan(){
+    fetch('/api/switch_plan')
+    .then(r=>r.json())
+    .then(d=>{
+        if(d.switch){
+            document.getElementById('plan').innerHTML =
+                "Close Switch: "+d.switch+
+                "<br>Restore: "+d.restore_nodes+" nodes";
+        }else{
+            document.getElementById('plan').innerHTML="No plan available";
+        }
+    });
+}
+
+// =========================
 setInterval(loadData,2000);
 loadData();
 
