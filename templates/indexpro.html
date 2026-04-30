@@ -1,137 +1,220 @@
-<!DOCTYPE html>
-<html>
-<head>
-<meta charset="utf-8">
-<title>PEA SPARK - GRIDWATCH</title>
+from flask import Flask, jsonify, render_template, request
+import json, os
+import networkx as nx
+from scipy.spatial import KDTree
 
-<link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
-<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+app = Flask(__name__)
 
-<style>
-body { margin:0; background:#0b1220; color:white; font-family:sans-serif;}
-#map { position:absolute; top:0; left:300px; right:0; bottom:0;}
+G=None
+NODE_LIST=[]
+TREE=None
 
-.panel {
-    position:absolute;
-    left:0;
-    top:0;
-    width:300px;
-    height:100%;
-    background:#0f1a2e;
-    padding:15px;
-    overflow:auto;
-}
+SWITCH_NODES={}
+SWITCH_STATUS={}
+FEEDER_COLOR={}
 
-.card { margin-bottom:15px; }
+FAULT_NODE=None
+FAULT_FEEDER=None
 
-button { padding:6px; margin-top:5px; width:100%; }
-</style>
-</head>
+# =========================
+def load(path):
+    # รองรับทั้ง .geojson และ .json
+    if not os.path.exists(path):
+        alt = path.replace(".geojson",".json")
+        if os.path.exists(alt):
+            path = alt
+        else:
+            print("❌ FILE NOT FOUND:", path)
+            return {"features":[]}
 
-<body>
+    with open(path,encoding="utf-8") as f:
+        return json.load(f)
 
-<div class="panel">
-<h2>⚡ GRIDWATCH</h2>
+# =========================
+def build():
+    global G,NODE_LIST,TREE
 
-<div class="card">
-<div id="online">Online: --</div>
-<div id="offline">Offline: --</div>
-</div>
+    G=nx.Graph()
+    nodes=[]
 
-<button onclick="getPlan()">Suggest Switching</button>
-<div id="plan"></div>
+    data=load("data/psconductor.geojson")
 
-</div>
+    for f in data["features"]:
+        geom=f["geometry"]
+        feeder=str(f["properties"].get("FEEDERID","UNK"))
 
-<div id="map"></div>
+        if geom["type"]!="LineString":
+            continue
 
-<script>
-var map = L.map('map').setView([13.75,100.5],13);
+        coords=geom["coordinates"]
 
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+        for i in range(len(coords)-1):
+            a=tuple(coords[i])
+            b=tuple(coords[i+1])
 
-var linesLayer = L.geoJSON(null, {
-    style: function(f){
-        return {
-            color: f.properties.status==="on"?f.properties.color:"#555",
-            weight:3
-        }
-    }
-}).addTo(map);
+            G.add_edge(a,b,feeder=feeder)
+            nodes+=[a,b]
 
-var switchLayer = L.geoJSON(null, {
-    pointToLayer: function(f, latlng){
-        return L.circleMarker(latlng,{
-            radius:6,
-            color: f.properties.status==1?"#00e5ff":"#ff5252",
-            fillOpacity:1
-        });
-    }
-}).addTo(map);
+    NODE_LIST=list(set(nodes))
 
-// =========================
-function loadData(){
+    if NODE_LIST:
+        TREE=KDTree(NODE_LIST)
 
-// 🔹 โหลดสายไฟ
-fetch('/api/conductor')
-.then(r=>r.json())
-.then(d=>{
-    linesLayer.clearLayers();
-    linesLayer.addData(d);
-});
+    # SWITCH
+    dof=load("data/DOF.geojson")
 
-// 🔹 โหลด switch
-fetch('/api/dof')
-.then(r=>r.json())
-.then(d=>{
-    switchLayer.clearLayers();
-    switchLayer.addData(d);
+    for f in dof["features"]:
+        fid=str(f["properties"].get("FACILITYID",""))
 
-    switchLayer.eachLayer(l=>{
-        l.on('click',()=>{
-            fetch('/toggle_switch?id='+l.feature.properties.id)
-            .then(()=>loadData());
-        });
-    });
-});
+        if "S" not in fid.upper():
+            continue
 
-// 🔹 SCADA
-fetch('/api/scada')
-.then(r=>r.json())
-.then(d=>{
-    document.getElementById('online').innerHTML="Online: "+d.nodes_on;
-    document.getElementById('offline').innerHTML="Offline: "+d.nodes_off;
-});
+        pos=int(f["properties"].get("PRESENTPOS",1))
+        lon,lat=f["geometry"]["coordinates"]
 
-}
+        if TREE:
+            _,i=TREE.query([lon,lat])
+            SWITCH_NODES[fid]=NODE_LIST[i]
+            SWITCH_STATUS[fid]=pos
 
-// =========================
-// fault click
-map.on('click', function(e){
-    fetch(`/fault?lat=${e.latlng.lat}&lon=${e.latlng.lng}`)
-    .then(()=>loadData());
-});
+    # COLOR
+    palette=["#00e5ff","#7c4dff","#ff9100","#00e676","#ff5252","#ffd600"]
 
-// =========================
-// switching plan
-function getPlan(){
-    fetch('/api/switch_plan')
-    .then(r=>r.json())
-    .then(d=>{
-        if(d.switch){
-            document.getElementById('plan').innerHTML =
-                "Close Switch: "+d.switch+
-                "<br>Restore: "+d.restore_nodes+" nodes";
-        }else{
-            document.getElementById('plan').innerHTML="No plan available";
-        }
-    });
-}
+    feeders=set(nx.get_edge_attributes(G,'feeder').values())
 
-// =========================
-setInterval(loadData,2000);
-loadData();
+    for i,f in enumerate(feeders):
+        FEEDER_COLOR[f]=palette[i%len(palette)]
 
-</script>
-</body>
-</html>
+# =========================
+def apply_fault():
+    G2=G.copy()
+
+    if FAULT_NODE and FAULT_NODE in G2:
+        G2.remove_node(FAULT_NODE)
+
+    for fid,node in SWITCH_NODES.items():
+        if SWITCH_STATUS.get(fid,1)==0:
+            if node in G2:
+                G2.remove_node(node)
+
+    return G2
+
+# =========================
+# 🔥 FIX PERFORMANCE (สำคัญสุด)
+def get_active_nodes():
+    G2=apply_fault()
+
+    try:
+        # ใช้ connected_components ครั้งเดียว
+        return set().union(*nx.connected_components(G2))
+    except:
+        return set()
+
+# =========================
+@app.route("/")
+def index():
+    return render_template("indexpro.html")
+
+# =========================
+@app.route("/fault")
+def fault():
+    global FAULT_NODE,FAULT_FEEDER
+
+    lat=float(request.args.get("lat"))
+    lon=float(request.args.get("lon"))
+
+    if TREE:
+        _,i=TREE.query([lon,lat])
+        FAULT_NODE=NODE_LIST[i]
+
+        FAULT_FEEDER="UNK"
+        for u,v,d in G.edges(data=True):
+            if u==FAULT_NODE or v==FAULT_NODE:
+                FAULT_FEEDER=d.get("feeder","UNK")
+                break
+
+    return jsonify({"node":str(FAULT_NODE),"feeder":FAULT_FEEDER})
+
+# =========================
+@app.route("/api/conductor")
+def conductor():
+    active=get_active_nodes()
+    data=load("data/psconductor.geojson")
+
+    feats=[]
+    for f in data["features"]:
+        coords=f["geometry"]["coordinates"]
+        feeder=str(f["properties"].get("FEEDERID","UNK"))
+
+        status="on"
+        if any(tuple(c) not in active for c in coords):
+            status="off"
+
+        feats.append({
+            "type":"Feature",
+            "geometry":f["geometry"],
+            "properties":{
+                "feeder":feeder,
+                "status":status,
+                "color":FEEDER_COLOR.get(feeder,"#888")
+            }
+        })
+
+    return jsonify({"type":"FeatureCollection","features":feats})
+
+# =========================
+@app.route("/api/dof")
+def dof():
+    data=load("data/DOF.geojson")
+
+    feats=[]
+    for f in data["features"]:
+        fid=str(f["properties"].get("FACILITYID",""))
+
+        if "S" not in fid.upper():
+            continue
+
+        pos=SWITCH_STATUS.get(fid,1)
+
+        feats.append({
+            "type":"Feature",
+            "geometry":f["geometry"],
+            "properties":{
+                "id":fid,
+                "status":pos
+            }
+        })
+
+    return jsonify({"type":"FeatureCollection","features":feats})
+
+# =========================
+@app.route("/toggle_switch")
+def toggle():
+    fid=request.args.get("id")
+
+    if fid in SWITCH_STATUS:
+        SWITCH_STATUS[fid]=1-SWITCH_STATUS[fid]
+
+    return jsonify({"id":fid,"status":SWITCH_STATUS.get(fid)})
+
+# =========================
+@app.route("/api/scada")
+def scada():
+    active=get_active_nodes()
+    total=len(NODE_LIST)
+
+    return jsonify({
+        "fault_feeder":FAULT_FEEDER,
+        "switch_open":sum(1 for v in SWITCH_STATUS.values() if v==0),
+        "nodes_on":len(active),
+        "nodes_off":total-len(active)
+    })
+
+# =========================
+# 🔥 BUILD ตอน start (สำคัญ)
+build()
+
+# =========================
+if __name__=="__main__":
+    port=int(os.environ.get("PORT",3000))
+    app.run(host="0.0.0.0",port=port)
