@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>PEA SPARK - GRIDWATCH</title>
+
+<link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+
+<style>
+body { margin:0; background:#0b1220; color:white; font-family:sans-serif;}
+#map { position:absolute; top:0; left:300px; right:0; bottom:0;}
+.panel {
+    position:absolute;
+    left:0;
+    top:0;
+    width:300px;
+    height:100%;
+    background:#0f1a2e;
+    padding:15px;
+}
+.card { margin-bottom:15px; }
+button { padding:6px; margin-top:5px;}
+</style>
+</head>
+
+<body>
+
+<div class="panel">
+<h2>⚡ GRIDWATCH</h2>
+
+<div class="card">
+<div id="online">--</div>
+<div id="offline">--</div>
+</div>
+
+</div>
+
+<div id="map"></div>
+
+<script>
+var map = L.map('map').setView([13.75,100.5],13);
+
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+
+var linesLayer = L.geoJSON().addTo(map);
+var switchLayer = L.geoJSON().addTo(map);
+
+// =========================
+function loadData(){
+
+fetch('/api/conductor').then(r=>r.json()).then(d=>{
+    linesLayer.clearLayers();
+    linesLayer.addData(d);
+    linesLayer.setStyle(f=>({
+        color: f.properties.status==="on"?f.properties.color:"#555",
+        weight:3
+    }));
+});
+
+fetch('/api/dof').then(r=>r.json()).then(d=>{
+    switchLayer.clearLayers();
+    switchLayer.addData(d);
+
+    switchLayer.eachLayer(l=>{
+        l.on('click',()=>{
+            fetch('/toggle_switch?id='+l.feature.properties.id)
+            .then(()=>loadData());
+        });
+    });
+});
+
+fetch('/api/scada').then(r=>r.json()).then(d=>{
+    document.getElementById('online').innerHTML="Online: "+d.cust_online;
+    document.getElementById('offline').innerHTML="Offline: "+d.cust_offline;
+});
+
+}
+
+map.on('click', function(e){
+    fetch(`/fault?lat=${e.latlng.lat}&lon=${e.latlng.lng}`)
+    .then(()=>loadData());
+});
+
+setInterval(loadData,2000);
+loadData();
+
+</script>
+</body>
+</html>
