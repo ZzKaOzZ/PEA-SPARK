@@ -50,7 +50,7 @@ def build():
     TREE=KDTree(NODE_LIST)
 
     # SWITCH
-    dof=load("data/DOF.geojson")
+    dof=load("data/DOF.json")
 
     for f in dof["features"]:
         fid=str(f["properties"].get("FACILITYID",""))
