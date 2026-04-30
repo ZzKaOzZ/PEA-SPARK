@@ -1,0 +1,8 @@
+flask
+geopandas
+networkx
+scipy
+shapely
+fiona
+pyproj
+rtree
