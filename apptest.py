@@ -287,7 +287,13 @@ def dof():
 
     for f in _DOF_FEATURES:
 
-        props = f.get("properties", {})
+        props = {
+    "id": row.get("id") or row.get("ID"),
+    "feeder": row.get("feeder") or row.get("FEEDER"),
+    "type": row.get("type") or row.get("TYPE") or row.get("DEVICE") or "disconnect",
+    "status": int(row.get("status", 1)),
+    "location": row.get("location") or ""
+}
         geom = f.get("geometry", {})
 
         fid = str(props.get("FACILITYID", ""))
