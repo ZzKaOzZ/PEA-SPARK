@@ -47,7 +47,7 @@ def build():
     G=nx.Graph()
     nodes=[]
 
-    data=load("data/psconductor.geojson")
+    data=load("data/psconductor.json")
 
     for f in data["features"]:
         geom=f["geometry"]
@@ -69,7 +69,7 @@ def build():
     TREE=KDTree(NODE_LIST)
 
     # SWITCH
-    dof=load("data/DOF.geojson")
+    dof=load("data/DOF.json")
 
     for f in dof["features"]:
         fid=str(f["properties"].get("FACILITYID",""))
@@ -156,7 +156,7 @@ def clear_fault():
 def conductor():
 
     active=get_active_nodes()
-    data=load("data/psconductor.geojson")
+    data=load("data/psconductor.json")
 
     feats=[]
     for f in data["features"]:
@@ -184,7 +184,7 @@ def conductor():
 @app.route("/api/dof")
 def dof():
 
-    data=load("data/DOF.geojson")
+    data=load("data/DOF.json")
     feats=[]
 
     for f in data["features"]:
