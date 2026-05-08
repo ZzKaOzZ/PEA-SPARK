@@ -607,7 +607,7 @@ L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
   maxZoom: 20
 }).addTo(map);
 
-var linesLayer  = L.geoJSON(null, { style: styleLines }).addTo(map);
+var linesLayer = L.geoJSON(null).addTo(map);
 var switchLayer = null;   // สร้างใหม่ทุกครั้งที่ renderSwitchLayer() เพื่อให้ pointToLayer ทำงาน
 
 var faultMarker = null;
@@ -781,9 +781,13 @@ function loadData() {
       return r.json();
     }).then(d => {
       if (d.error) { showBuildError(d.error); return; }
-      linesLayer.clearLayers();
-      linesLayer.addData(d);
-      linesLayer.setStyle(styleLines);
+      if (linesLayer) {
+  map.removeLayer(linesLayer);
+}
+
+linesLayer = L.geoJSON(d, {
+  style: styleLines
+}).addTo(map);
     }).catch(e => showBuildError(e.message));
 
     fetch('/api/dof').then(r => {
