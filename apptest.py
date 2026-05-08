@@ -1,134 +1,220 @@
 from flask import Flask, jsonify, render_template, request
-import os, traceback
+import os
+import json
+import traceback
 import networkx as nx
 from scipy.spatial import KDTree
-import geopandas as gpd
 
 app = Flask(__name__)
 
 # ── global state ──────────────────────────────────────────
-G          = None
-NODE_LIST  = []
-TREE       = None
+G = None
+NODE_LIST = []
+TREE = None
 
-SWITCH_NODES  = {}
+SWITCH_NODES = {}
 SWITCH_STATUS = {}
-SWITCH_TYPE   = {}
-FEEDER_COLOR  = {}
+SWITCH_TYPE = {}
+FEEDER_COLOR = {}
 
-FAULT_NODE   = None
+FAULT_NODE = None
 FAULT_FEEDER = None
 
-# ── cache อ่านไฟล์ครั้งเดียวตอน build ───────────────────
+# ── cache ─────────────────────────────────────────────────
 _CONDUCTOR_FEATURES = []
-_DOF_FEATURES       = []
+_DOF_FEATURES = []
 
-BUILD_ERROR = None   # เก็บ traceback ถ้า build() ล้มเหลว
+BUILD_ERROR = None
 
 # ==========================================================
-def load_shp(path):
-    """โหลด Shapefile แล้วแปลงเป็น GeoJSON-like dict (CRS → EPSG:4326)"""
-    abs_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), path)
+def load_json(path):
+
+    abs_path = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        path
+    )
+
+    print(f"[load_json] {abs_path}")
+
     if not os.path.exists(abs_path):
         raise FileNotFoundError(f"ไม่พบไฟล์: {abs_path}")
-    gdf = gpd.read_file(abs_path)
-    if gdf.crs and gdf.crs.to_epsg() != 4326:
-        gdf = gdf.to_crs(epsg=4326)
-    import json as _json
-    return _json.loads(gdf.to_json())
+
+    with open(abs_path, encoding="utf-8") as f:
+        return json.load(f)
 
 # ==========================================================
 def infer_switch_type(fid, props):
+
     subtype = str(props.get("SUBTYPE", "")).upper()
-    name    = fid.upper()
-    if "RECLOSER" in subtype or "REC" in name or name.endswith("R"):
+    name = fid.upper()
+
+    if "RECLOSER" in subtype or "REC" in name:
         return "Recloser"
-    if "LOADBREAK" in subtype or "LB" in subtype or "LBS" in name:
+
+    if "LOADBREAK" in subtype or "LB" in subtype:
         return "Load Break"
+
     if "TVS" in name or "VS" in subtype:
         return "Switch"
+
     return "Disconnect"
 
 # ==========================================================
 def build():
+
     global G, NODE_LIST, TREE, BUILD_ERROR
     global _CONDUCTOR_FEATURES, _DOF_FEATURES
     global SWITCH_NODES, SWITCH_STATUS, SWITCH_TYPE, FEEDER_COLOR
 
     BUILD_ERROR = None
+
     try:
-        # ── conductor ─────────────────────────────────────
-        conductor_data      = load_shp("data/psconductor.shp")
+
+        SWITCH_NODES.clear()
+        SWITCH_STATUS.clear()
+        SWITCH_TYPE.clear()
+        FEEDER_COLOR.clear()
+
+        # ==================================================
+        # conductor
+        # ==================================================
+
+        conductor_data = load_json("data/psconductor.json")
         _CONDUCTOR_FEATURES = conductor_data["features"]
 
-        G     = nx.Graph()
+        G = nx.Graph()
         nodes = []
 
         for f in _CONDUCTOR_FEATURES:
-            geom   = f["geometry"]
-            feeder = str(f["properties"].get("FEEDERID", "UNK"))
-            if geom["type"] != "LineString":
+
+            geom = f.get("geometry", {})
+            props = f.get("properties", {})
+
+            feeder = str(props.get("FEEDERID", "UNK"))
+
+            gtype = geom.get("type")
+            coords = geom.get("coordinates", [])
+
+            lines = []
+
+            if gtype == "LineString":
+                lines = [coords]
+
+            elif gtype == "MultiLineString":
+                lines = coords
+
+            else:
                 continue
-            coords = geom["coordinates"]
-            for i in range(len(coords) - 1):
-                a = tuple(coords[i])
-                b = tuple(coords[i + 1])
-                G.add_edge(a, b, feeder=feeder)
-                nodes += [a, b]
+
+            for line in lines:
+
+                if len(line) < 2:
+                    continue
+
+                for i in range(len(line) - 1):
+
+                    a = tuple(line[i])
+                    b = tuple(line[i + 1])
+
+                    G.add_edge(a, b, feeder=feeder)
+
+                    nodes += [a, b]
 
         if not nodes:
-            raise ValueError("psconductor.shp ไม่มี LineString features")
+            raise ValueError("psconductor.json ไม่มีข้อมูลสาย")
 
         NODE_LIST = list(set(nodes))
-        TREE      = KDTree(NODE_LIST)
+        TREE = KDTree(NODE_LIST)
 
-        # ── DOF / switches ────────────────────────────────
-        dof_data      = load_shp("data/DOF.shp")
+        # ==================================================
+        # switch
+        # ==================================================
+
+        dof_data = load_json("data/DOF.json")
         _DOF_FEATURES = dof_data["features"]
 
         for f in _DOF_FEATURES:
-            fid   = str(f["properties"].get("FACILITYID", ""))
-            props = f["properties"]
+
+            props = f.get("properties", {})
+            geom = f.get("geometry", {})
+
+            fid = str(props.get("FACILITYID", ""))
+
             if "S" not in fid.upper():
                 continue
-            pos       = int(props.get("PRESENTPOS", 1))
-            lon, lat  = f["geometry"]["coordinates"]
-            _, idx    = TREE.query([lon, lat])
-            SWITCH_NODES[fid]  = NODE_LIST[idx]
+
+            if geom.get("type") != "Point":
+                continue
+
+            coords = geom.get("coordinates", [])
+
+            if len(coords) < 2:
+                continue
+
+            pos = int(props.get("PRESENTPOS", 1))
+
+            lon, lat = coords
+
+            _, idx = TREE.query([lon, lat])
+
+            SWITCH_NODES[fid] = NODE_LIST[idx]
             SWITCH_STATUS[fid] = pos
-            SWITCH_TYPE[fid]   = infer_switch_type(fid, props)
+            SWITCH_TYPE[fid] = infer_switch_type(fid, props)
 
-        # ── feeder colours ────────────────────────────────
-        palette = ["#00e5ff","#7c4dff","#ff9100","#00e676",
-                   "#ff5252","#ffd600","#e040fb","#40c4ff"]
-        for i, fdr in enumerate(sorted(set(nx.get_edge_attributes(G, "feeder").values()))):
-            FEEDER_COLOR[fdr] = palette[i % len(palette)]
+        # ==================================================
+        # feeder colors
+        # ==================================================
 
-        print(f"[build] OK  nodes={len(NODE_LIST)}  edges={G.number_of_edges()}  "
-              f"switches={len(SWITCH_STATUS)}  feeders={len(FEEDER_COLOR)}")
+        palette = [
+            "#00e5ff",
+            "#7c4dff",
+            "#ff9100",
+            "#00e676",
+            "#ff5252",
+            "#ffd600",
+            "#e040fb",
+            "#40c4ff"
+        ]
+
+        feeders = sorted(
+            set(nx.get_edge_attributes(G, "feeder").values())
+        )
+
+        for i, feeder in enumerate(feeders):
+            FEEDER_COLOR[feeder] = palette[i % len(palette)]
+
+        print(
+            f"[build] OK "
+            f"nodes={len(NODE_LIST)} "
+            f"edges={G.number_of_edges()} "
+            f"switches={len(SWITCH_STATUS)}"
+        )
 
     except Exception:
-        BUILD_ERROR = traceback.format_exc()
-        print(f"[build] FAILED\n{BUILD_ERROR}")
 
-# ==========================================================
-def require_build():
-    if G is None or BUILD_ERROR:
-        return jsonify({"error": "build() ยังไม่สำเร็จ",
-                        "detail": BUILD_ERROR or "G is None"}), 503
-    return None
+        BUILD_ERROR = traceback.format_exc()
+        print(BUILD_ERROR)
 
 # ==========================================================
 def get_active_nodes():
+
     G2 = G.copy()
+
     if FAULT_NODE and FAULT_NODE in G2:
         G2.remove_node(FAULT_NODE)
+
     for fid, node in SWITCH_NODES.items():
-        if SWITCH_STATUS.get(fid, 1) == 0 and node in G2:
-            G2.remove_node(node)
+
+        if SWITCH_STATUS.get(fid, 1) == 0:
+
+            if node in G2:
+                G2.remove_node(node)
+
     active = set()
+
     for component in nx.connected_components(G2):
         active |= component
+
     return active
 
 # ==========================================================
@@ -137,170 +223,189 @@ def index():
     return render_template("indexpro.html")
 
 # ==========================================================
-@app.route("/api/debug")
-def debug():
-    """เปิด /api/debug เพื่อตรวจสอบสถานะ build"""
-    data_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
-    return jsonify({
-        "build_ok":       G is not None and BUILD_ERROR is None,
-        "build_error":    BUILD_ERROR,
-        "nodes":          len(NODE_LIST),
-        "edges":          G.number_of_edges() if G else 0,
-        "switches":       len(SWITCH_STATUS),
-        "feeders":        list(FEEDER_COLOR.keys()),
-        "conductor_rows": len(_CONDUCTOR_FEATURES),
-        "dof_rows":       len(_DOF_FEATURES),
-        "data_dir":       data_dir,
-        "data_files":     os.listdir(data_dir) if os.path.isdir(data_dir) else [],
-        "cwd":            os.getcwd(),
-    })
-
-# ==========================================================
 @app.route("/api/conductor")
 def conductor():
-    err = require_build()
-    if err: return err
+
     try:
+
         active = get_active_nodes()
-        feats  = []
+
+        feats = []
+
         for f in _CONDUCTOR_FEATURES:
-            geom   = f["geometry"]
-            feeder = str(f["properties"].get("FEEDERID", "UNK"))
-            if geom["type"] != "LineString":
+
+            geom = f.get("geometry", {})
+            props = f.get("properties", {})
+
+            feeder = str(props.get("FEEDERID", "UNK"))
+
+            gtype = geom.get("type")
+            coords = geom.get("coordinates", [])
+
+            lines = []
+
+            if gtype == "LineString":
+                lines = [coords]
+
+            elif gtype == "MultiLineString":
+                lines = coords
+
+            else:
                 continue
-            coords = geom["coordinates"]
-            status = "off" if any(tuple(c) not in active for c in coords) else "on"
+
+            status = "on"
+
+            for line in lines:
+
+                if any(tuple(c) not in active for c in line):
+                    status = "off"
+                    break
+
             feats.append({
-                "type": "Feature", "geometry": geom,
-                "properties": {"feeder": feeder, "status": status,
-                               "color": FEEDER_COLOR.get(feeder, "#888")}
+                "type": "Feature",
+                "geometry": geom,
+                "properties": {
+                    "feeder": feeder,
+                    "status": status,
+                    "color": FEEDER_COLOR.get(feeder, "#888")
+                }
             })
-        return jsonify({"type": "FeatureCollection", "features": feats})
+
+        return jsonify({
+            "type": "FeatureCollection",
+            "features": feats
+        })
+
     except Exception:
-        return jsonify({"error": traceback.format_exc()}), 500
+        return jsonify({"error": traceback.format_exc()})
 
 # ==========================================================
 @app.route("/api/dof")
 def dof():
-    err = require_build()
-    if err: return err
-    try:
-        feats = []
-        for f in _DOF_FEATURES:
-            fid   = str(f["properties"].get("FACILITYID", ""))
-            props = f["properties"]
-            if "S" not in fid.upper():
-                continue
-            pos     = SWITCH_STATUS.get(fid, 1)
-            sw_type = SWITCH_TYPE.get(fid, "Disconnect")
-            lon, lat = f["geometry"]["coordinates"]
-            _, idx   = TREE.query([lon, lat])
-            near     = NODE_LIST[idx]
-            feeder   = "UNK"
-            for u, v, d in G.edges(near, data=True):
-                feeder = d.get("feeder", "UNK")
-                break
-            location = str(props.get("LOCATION",
-                           props.get("STREETNAME",
-                           props.get("SUBSTATION", ""))))
-            feats.append({
-                "type": "Feature", "geometry": f["geometry"],
-                "properties": {"id": fid,
-                               "state":    "CLOSE" if pos == 1 else "OPEN",
-                               "status":   pos,
-                               "type":     sw_type,
-                               "feeder":   feeder,
-                               "location": location}
-            })
-        return jsonify({"type": "FeatureCollection", "features": feats})
-    except Exception:
-        return jsonify({"error": traceback.format_exc()}), 500
+
+    feats = []
+
+    for f in _DOF_FEATURES:
+
+        props = f.get("properties", {})
+        geom = f.get("geometry", {})
+
+        fid = str(props.get("FACILITYID", ""))
+
+        if "S" not in fid.upper():
+            continue
+
+        feats.append({
+            "type": "Feature",
+            "geometry": geom,
+            "properties": {
+                "id": fid,
+                "status": SWITCH_STATUS.get(fid, 1),
+                "type": SWITCH_TYPE.get(fid, "Disconnect"),
+                "feeder": props.get("FEEDERID", "UNK"),
+                "location": props.get("LOCATION", "")
+            }
+        })
+
+    return jsonify({
+        "type": "FeatureCollection",
+        "features": feats
+    })
 
 # ==========================================================
 @app.route("/toggle_switch")
 def toggle():
-    err = require_build()
-    if err: return err
+
     fid = request.args.get("id")
+
     if fid in SWITCH_STATUS:
         SWITCH_STATUS[fid] = 1 - SWITCH_STATUS[fid]
-    return jsonify({"id": fid, "status": SWITCH_STATUS.get(fid, -1)})
+
+    return jsonify({"ok": True})
 
 # ==========================================================
 @app.route("/fault")
 def fault():
-    err = require_build()
-    if err: return err
-    global FAULT_NODE, FAULT_FEEDER
+
+    global FAULT_NODE
+
     lat = float(request.args.get("lat"))
     lon = float(request.args.get("lon"))
-    _, i       = TREE.query([lon, lat])
+
+    _, i = TREE.query([lon, lat])
+
     FAULT_NODE = NODE_LIST[i]
-    FAULT_FEEDER = "UNK"
-    for u, v, d in G.edges(data=True):
-        if u == FAULT_NODE or v == FAULT_NODE:
-            FAULT_FEEDER = d.get("feeder", "UNK")
-            break
-    return jsonify({"node": str(FAULT_NODE), "feeder": FAULT_FEEDER})
+
+    return jsonify({"ok": True})
 
 # ==========================================================
 @app.route("/clear_fault")
 def clear_fault():
-    global FAULT_NODE, FAULT_FEEDER
-    FAULT_NODE = FAULT_FEEDER = None
-    return jsonify({"status": "cleared"})
+
+    global FAULT_NODE
+
+    FAULT_NODE = None
+
+    return jsonify({"ok": True})
 
 # ==========================================================
 @app.route("/api/scada")
 def scada():
-    err = require_build()
-    if err: return err
-    try:
-        active         = get_active_nodes()
-        total          = len(NODE_LIST)
-        nodes_on       = len(active)
-        nodes_off      = total - nodes_on
-        energized_pct  = round(nodes_on / total * 100, 1) if total > 0 else 0
-        total_switches = len(SWITCH_STATUS)
-        open_switches  = sum(1 for v in SWITCH_STATUS.values() if v == 0)
 
-        feeder_nodes = {}
-        for u, v, d in G.edges(data=True):
-            fdr = d.get("feeder", "UNK")
-            feeder_nodes.setdefault(fdr, set()).update([u, v])
+    active = get_active_nodes()
 
-        feeder_status = {}
-        for fdr, fnodes in feeder_nodes.items():
-            on = len(fnodes & active)
-            feeder_status[fdr] = {
-                "color": FEEDER_COLOR.get(fdr, "#888"),
-                "total": len(fnodes),
-                "on":    on,
-                "pct":   round(on / len(fnodes) * 100, 1) if fnodes else 0
-            }
+    total = len(NODE_LIST)
 
-        return jsonify({
-            "fault_feeder":   FAULT_FEEDER,
-            "fault_node":     str(FAULT_NODE) if FAULT_NODE else None,
-            "open_switches":  open_switches,
-            "total_switches": total_switches,
-            "nodes_on":       nodes_on,
-            "nodes_off":      nodes_off,
-            "energized_pct":  energized_pct,
-            "feeders":        feeder_status
-        })
-    except Exception:
-        return jsonify({"error": traceback.format_exc()}), 500
+    nodes_on = len(active)
+
+    return jsonify({
+        "energized_pct": round(nodes_on / total * 100, 1),
+        "nodes_on": nodes_on,
+        "nodes_off": total - nodes_on,
+        "open_switches": sum(
+            1 for v in SWITCH_STATUS.values()
+            if v == 0
+        ),
+        "total_switches": len(SWITCH_STATUS),
+        "fault_feeder": FAULT_FEEDER
+    })
 
 # ==========================================================
-@app.route("/api/feeders")
-def feeders():
-    return jsonify({"colors": FEEDER_COLOR,
-                    "feeders": sorted(FEEDER_COLOR.keys())})
+print("=" * 60)
+print("PEA SPARK STARTING")
+print("=" * 60)
 
-# ==========================================================
 build()
 
+# ==========================================================
+@app.route("/api/debug")
+def debug():
+
+    data_dir = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        "data"
+    )
+
+    return jsonify({
+        "build_ok": G is not None and BUILD_ERROR is None,
+        "build_error": BUILD_ERROR,
+        "nodes": len(NODE_LIST),
+        "edges": G.number_of_edges() if G else 0,
+        "switches": len(SWITCH_STATUS),
+        "feeders": list(FEEDER_COLOR.keys()),
+        "conductor_rows": len(_CONDUCTOR_FEATURES),
+        "dof_rows": len(_DOF_FEATURES),
+        "data_dir": data_dir,
+        "data_files": os.listdir(data_dir) if os.path.isdir(data_dir) else [],
+        "cwd": os.getcwd(),
+    })
+
+# ==========================================================
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 3000))
-    app.run(host="0.0.0.0", port=port, debug=False)
+
+    app.run(
+        host="0.0.0.0",
+        port=3000,
+        debug=False
+    )
+
