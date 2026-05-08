@@ -548,14 +548,32 @@ body.fault-mode #map { cursor: crosshair !important; }
 <!-- ══════════════════════════ LAYER CONTROL ══════════════════════════ -->
 <div id="layers">
   <div class="lyr-title">⊞ Layers</div>
+
+  <!-- Switches: วงกลมเขียว -->
   <div class="lyr-row active" id="lyr-switches" onclick="toggleLayer('switches')" style="color:#22c55e;">
     <div class="lyr-dot" style="border-color:#22c55e;"></div> Switches
   </div>
+
+  <!-- Reclosers: สามเหลี่ยมส้ม -->
   <div class="lyr-row active" id="lyr-reclosers" onclick="toggleLayer('reclosers')" style="color:#f59e0b;">
-    <div class="lyr-dot" style="border-color:#f59e0b;"></div> Reclosers
+    <div style="
+      width:0; height:0;
+      border-left:6px solid transparent;
+      border-right:6px solid transparent;
+      border-bottom:11px solid #f59e0b;
+      flex-shrink:0;
+      opacity:1;
+    "></div> Reclosers
   </div>
-  <div class="lyr-row active" id="lyr-transformers" onclick="toggleLayer('transformers')" style="color:#f59e0b;">
-    <div class="lyr-dot" style="border-color:#f59e0b;"></div> Transformers
+
+  <!-- Transformers: วงกลมเหลือง (placeholder ถ้ายังไม่มี layer จริง) -->
+  <div class="lyr-row active" id="lyr-transformers" onclick="toggleLayer('transformers')" style="color:#facc15;">
+    <div style="
+      width:10px; height:10px;
+      background:#facc15;
+      border-radius:2px;
+      flex-shrink:0;
+    "></div> Transformers
   </div>
 </div>
 
@@ -573,11 +591,11 @@ L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
   maxZoom: 20
 }).addTo(map);
 
-var linesLayer   = L.geoJSON(null, { style: styleLines }).addTo(map);
-var switchLayer  = L.geoJSON(null, { pointToLayer: makeSwitchMarker, onEachFeature: onEachSwitch }).addTo(map);
+var linesLayer  = L.geoJSON(null, { style: styleLines }).addTo(map);
+var switchLayer = null;   // สร้างใหม่ทุกครั้งที่ renderSwitchLayer() เพื่อให้ pointToLayer ทำงาน
 
-var faultMarker  = null;
-var faultMode    = false;
+var faultMarker = null;
+var faultMode   = false;
 
 // layer visibility
 var layerVis = { switches: true, reclosers: true, transformers: true };
@@ -591,41 +609,60 @@ var scadaData   = {};
 function styleLines(f) {
   var on = f.properties.status === "on";
   return {
-    color:  on ? f.properties.color : "#2a3a52",
-    weight: on ? 2.5 : 1.5,
+    color:   on ? f.properties.color : "#2a3a52",
+    weight:  on ? 2.5 : 1.5,
     opacity: on ? 0.9 : 0.5
   };
 }
 
+// สัญลักษณ์แต่ละประเภท:
+//   Disconnect  → ⬤ วงกลม       สีสถานะ (เขียว/แดง)
+//   Load Break  → ■ สี่เหลี่ยม    สีสถานะ (เขียว/แดง)
+//   Switch      → ◆ ข้าวหลามตัด  สีสถานะ (เขียว/แดง)
+//   Recloser    → ▲ สามเหลี่ยม  สีส้ม/เหลือง (แยกออกชัดเจน)
 function makeSwitchMarker(f, latlng) {
   var p = f.properties;
-  var isOpen   = p.status === 0;
-  var isRecloser = (p.type || '').toLowerCase() === 'recloser';
+  var isOpen = p.status === 0;
+  var t = (p.type || 'disconnect').toLowerCase();
+  var stateColor = isOpen ? '#ef4444' : '#22c55e';
+  var html = '', sz = [8,8], anc = [4,4];
 
-  var color = isOpen ? '#ef4444' : '#22c55e';
-  var size  = isRecloser ? 10 : 8;
+  if (t === 'recloser') {
+    var rc = isOpen ? '#fb923c' : '#f59e0b';
+    html = `<div style="width:0;height:0;
+      border-left:7px solid transparent;
+      border-right:7px solid transparent;
+      border-bottom:13px solid ${rc};
+      filter:drop-shadow(0 0 4px ${rc});"></div>`;
+    sz=[14,13]; anc=[7,7];
 
-  var icon = L.divIcon({
-    className: '',
-    html: `<div style="
-      width:${size}px; height:${size}px;
+  } else if (t === 'load break') {
+    html = `<div style="width:10px;height:10px;
+      background:${stateColor};
+      border:2px solid rgba(255,255,255,.4);
+      box-shadow:0 0 6px ${stateColor};"></div>`;
+    sz=[10,10]; anc=[5,5];
+
+  } else if (t === 'switch') {
+    html = `<div style="width:9px;height:9px;
+      background:${stateColor};
+      border:2px solid rgba(255,255,255,.4);
+      box-shadow:0 0 6px ${stateColor};
+      transform:rotate(45deg);"></div>`;
+    sz=[11,11]; anc=[5,5];
+
+  } else {
+    // Disconnect — วงกลม
+    html = `<div style="width:8px;height:8px;
       border-radius:50%;
-      background:${color};
-      border: 2px solid rgba(255,255,255,.35);
-      box-shadow: 0 0 ${isOpen?8:5}px ${color};
-    "></div>`,
-    iconSize:   [size, size],
-    iconAnchor: [size/2, size/2]
-  });
+      background:${stateColor};
+      border:2px solid rgba(255,255,255,.35);
+      box-shadow:0 0 ${isOpen?8:5}px ${stateColor};"></div>`;
+  }
 
-  return L.marker(latlng, { icon });
-}
-
-function onEachSwitch(f, layer) {
-  var p = f.properties;
-  layer.on('click', function(e) {
-    L.DomEvent.stopPropagation(e);
-    showSwitchPopup(f, layer);
+  return L.marker(latlng, {
+    icon: L.divIcon({ className:'', html, iconSize:sz, iconAnchor:anc }),
+    zIndexOffset: t === 'recloser' ? 100 : 0
   });
 }
 
@@ -741,20 +778,28 @@ function loadData() {
 
 // ──────── SWITCH LAYER RENDER ────────
 function renderSwitchLayer() {
-  switchLayer.clearLayers();
+  // ต้องสร้าง layer ใหม่ทุกครั้ง — clearLayers() + addData() ไม่เรียก pointToLayer ซ้ำ
+  if (switchLayer) map.removeLayer(switchLayer);
 
   var visible = allSwitches.filter(f => {
     var t = (f.properties.type || '').toLowerCase();
-    if (t === 'recloser'  && !layerVis.reclosers)    return false;
-    if (t !== 'recloser'  && !layerVis.switches)     return false;
+    if (t === 'recloser' && !layerVis.reclosers)  return false;
+    if (t !== 'recloser' && !layerVis.switches)   return false;
     return true;
   });
 
-  var fc = { type: 'FeatureCollection', features: visible };
-  switchLayer.addData(fc);
-  switchLayer.eachLayer(l => {
-    l.on('click', e => { L.DomEvent.stopPropagation(e); showSwitchPopup(l.feature, l); });
-  });
+  switchLayer = L.geoJSON(
+    { type: 'FeatureCollection', features: visible },
+    {
+      pointToLayer: makeSwitchMarker,
+      onEachFeature: function(f, layer) {
+        layer.on('click', function(e) {
+          L.DomEvent.stopPropagation(e);
+          showSwitchPopup(f, layer);
+        });
+      }
+    }
+  ).addTo(map);
 }
 
 // ──────── TOP BAR ────────
