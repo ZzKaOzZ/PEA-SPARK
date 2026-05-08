@@ -399,7 +399,13 @@ def debug():
         "data_files": os.listdir(data_dir) if os.path.isdir(data_dir) else [],
         "cwd": os.getcwd(),
     })
-
+# ==========================================================
+@app.route("/api/debug")
+def api_debug():
+    return jsonify({
+        "build_ok": True,
+        "build_error": None
+    })
 # ==========================================================
 if __name__ == "__main__":
 
