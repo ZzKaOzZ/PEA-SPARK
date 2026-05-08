@@ -5,142 +5,118 @@ from scipy.spatial import KDTree
 
 app = Flask(__name__)
 
-# =========================
-# GLOBAL
-G = None
-NODE_LIST = []
-TREE = None
+G=None
+NODE_LIST=[]
+TREE=None
 
-SWITCH_NODES = {}
-SWITCH_STATUS = {}
-FEEDER_COLOR = {}
+SWITCH_NODES={}
+SWITCH_STATUS={}
+SWITCH_TYPE={}   # fid -> "Disconnect" | "Load Break" | "Switch" | "Recloser"
+FEEDER_COLOR={}
 
-FAULT_NODE = None
-FAULT_FEEDER = None
-
-# 🔥 CACHE
-ACTIVE_CACHE = set()
-CACHE_VALID = False
+FAULT_NODE=None
+FAULT_FEEDER=None
 
 # =========================
 def load(path):
-    if not os.path.exists(path):
-        alt = path.replace(".geojson", ".json")
-        if os.path.exists(alt):
-            path = alt
-        else:
-            print("❌ FILE NOT FOUND:", path)
-            return {"features": []}
-
-    with open(path, encoding="utf-8") as f:
+    with open(path,encoding="utf-8") as f:
         return json.load(f)
 
 # =========================
+def infer_switch_type(fid, props):
+    """
+    Infer switch type from FACILITYID or properties.
+    Priority: explicit SUBTYPE field -> name pattern -> default Disconnect
+    """
+    subtype = str(props.get("SUBTYPE","")).upper()
+    name    = fid.upper()
+
+    if "RECLOSER" in subtype or "REC" in name or name.endswith("R"):
+        return "Recloser"
+    if "LOADBREAK" in subtype or "LB" in subtype or "LBS" in name:
+        return "Load Break"
+    if "TVS" in name or "VS" in subtype:
+        return "Switch"
+    return "Disconnect"
+
+# =========================
 def build():
-    global G, NODE_LIST, TREE
 
-    print("🚀 BUILD GRAPH...")
+    global G,NODE_LIST,TREE
 
-    G = nx.Graph()
-    nodes = []
+    G=nx.Graph()
+    nodes=[]
 
-    data = load("data/psconductor.geojson")
+    data=load("data/psconductor.geojson")
 
     for f in data["features"]:
-        geom = f["geometry"]
-        feeder = str(f["properties"].get("FEEDERID", "UNK"))
+        geom=f["geometry"]
+        feeder=str(f["properties"].get("FEEDERID","UNK"))
 
-        if geom["type"] != "LineString":
+        if geom["type"]!="LineString":
             continue
 
-        coords = geom["coordinates"]
+        coords=geom["coordinates"]
 
-        for i in range(len(coords) - 1):
-            a = tuple(coords[i])
-            b = tuple(coords[i + 1])
+        for i in range(len(coords)-1):
+            a=tuple(coords[i])
+            b=tuple(coords[i+1])
 
-            G.add_edge(a, b, feeder=feeder)
-            nodes += [a, b]
+            G.add_edge(a,b,feeder=feeder)
+            nodes+=[a,b]
 
-    NODE_LIST = list(set(nodes))
-
-    if NODE_LIST:
-        TREE = KDTree(NODE_LIST)
+    NODE_LIST=list(set(nodes))
+    TREE=KDTree(NODE_LIST)
 
     # SWITCH
-    dof = load("data/DOF.geojson")
+    dof=load("data/DOF.geojson")
 
     for f in dof["features"]:
-        fid = str(f["properties"].get("FACILITYID", ""))
+        fid=str(f["properties"].get("FACILITYID",""))
+        props=f["properties"]
 
         if "S" not in fid.upper():
             continue
 
-        pos = int(f["properties"].get("PRESENTPOS", 1))
-        lon, lat = f["geometry"]["coordinates"]
+        pos=int(props.get("PRESENTPOS",1))
+        lon,lat=f["geometry"]["coordinates"]
 
-        if TREE:
-            _, i = TREE.query([lon, lat])
-            SWITCH_NODES[fid] = NODE_LIST[i]
-            SWITCH_STATUS[fid] = pos
+        _,i=TREE.query([lon,lat])
+
+        SWITCH_NODES[fid]=NODE_LIST[i]
+        SWITCH_STATUS[fid]=pos
+        SWITCH_TYPE[fid]=infer_switch_type(fid, props)
 
     # COLOR
-    palette = ["#00e5ff", "#7c4dff", "#ff9100", "#00e676", "#ff5252", "#ffd600"]
-    feeders = set(nx.get_edge_attributes(G, 'feeder').values())
+    palette=["#00e5ff","#7c4dff","#ff9100","#00e676","#ff5252","#ffd600","#e040fb","#40c4ff"]
 
-    for i, f in enumerate(feeders):
-        FEEDER_COLOR[f] = palette[i % len(palette)]
-
-    print("✅ BUILD DONE")
+    for i,f in enumerate(sorted(set(nx.get_edge_attributes(G,'feeder').values()))):
+        FEEDER_COLOR[f]=palette[i%len(palette)]
 
 # =========================
 def apply_fault():
-    try:
-        G2 = G.copy()
 
-        if FAULT_NODE and FAULT_NODE in G2:
-            G2.remove_node(FAULT_NODE)
+    G2=G.copy()
 
-        for fid, node in SWITCH_NODES.items():
-            if SWITCH_STATUS.get(fid, 1) == 0:
-                if node in G2:
-                    G2.remove_node(node)
+    if FAULT_NODE and FAULT_NODE in G2:
+        G2.remove_node(FAULT_NODE)
 
-        return G2
+    for fid,node in SWITCH_NODES.items():
+        if SWITCH_STATUS.get(fid,1)==0:
+            if node in G2:
+                G2.remove_node(node)
 
-    except Exception as e:
-        print("❌ apply_fault error:", e)
-        return nx.Graph()
+    return G2
 
 # =========================
-# 🔥 COMPUTE (หนัก)
-def compute_active_nodes():
-    try:
-        G2 = apply_fault()
-
-        if G2 is None or len(G2.nodes) == 0:
-            return set()
-
-        active = set()
-        for comp in nx.connected_components(G2):
-            active |= comp
-
-        return active
-
-    except Exception as e:
-        print("❌ compute_active_nodes error:", e)
-        return set()
-
-# =========================
-# 🔥 CACHE
 def get_active_nodes():
-    global ACTIVE_CACHE, CACHE_VALID
+    G2=apply_fault()
+    active=set()
 
-    if not CACHE_VALID:
-        ACTIVE_CACHE = compute_active_nodes()
-        CACHE_VALID = True
+    for n in G2.nodes():
+        active |= set(nx.node_connected_component(G2,n))
 
-    return ACTIVE_CACHE
+    return active
 
 # =========================
 @app.route("/")
@@ -150,137 +126,164 @@ def index():
 # =========================
 @app.route("/fault")
 def fault():
-    global FAULT_NODE, FAULT_FEEDER, CACHE_VALID
 
-    try:
-        lat = float(request.args.get("lat"))
-        lon = float(request.args.get("lon"))
+    global FAULT_NODE,FAULT_FEEDER
 
-        if TREE:
-            _, i = TREE.query([lon, lat])
-            FAULT_NODE = NODE_LIST[i]
+    lat=float(request.args.get("lat"))
+    lon=float(request.args.get("lon"))
 
-            FAULT_FEEDER = "UNK"
-            for u, v, d in G.edges(data=True):
-                if u == FAULT_NODE or v == FAULT_NODE:
-                    FAULT_FEEDER = d.get("feeder", "UNK")
-                    break
+    _,i=TREE.query([lon,lat])
+    FAULT_NODE=NODE_LIST[i]
 
-        CACHE_VALID = False  # 🔥 invalidate
+    FAULT_FEEDER="UNK"
+    for u,v,d in G.edges(data=True):
+        if u==FAULT_NODE or v==FAULT_NODE:
+            FAULT_FEEDER=d.get("feeder","UNK")
+            break
 
-        return jsonify({"node": str(FAULT_NODE), "feeder": FAULT_FEEDER})
+    return jsonify({"node":str(FAULT_NODE),"feeder":FAULT_FEEDER})
 
-    except Exception as e:
-        print("❌ fault error:", e)
-        return jsonify({"node": None, "feeder": "-"})
+# =========================
+@app.route("/clear_fault")
+def clear_fault():
+    global FAULT_NODE,FAULT_FEEDER
+    FAULT_NODE=None
+    FAULT_FEEDER=None
+    return jsonify({"status":"cleared"})
 
 # =========================
 @app.route("/api/conductor")
 def conductor():
-    try:
-        active = get_active_nodes()
-        data = load("data/psconductor.geojson")
 
-        feats = []
-        for f in data["features"]:
-            coords = f["geometry"]["coordinates"]
-            feeder = str(f["properties"].get("FEEDERID", "UNK"))
+    active=get_active_nodes()
+    data=load("data/psconductor.geojson")
 
-            status = "on"
-            if any(tuple(c) not in active for c in coords):
-                status = "off"
+    feats=[]
+    for f in data["features"]:
 
-            feats.append({
-                "type": "Feature",
-                "geometry": f["geometry"],
-                "properties": {
-                    "feeder": feeder,
-                    "status": status,
-                    "color": FEEDER_COLOR.get(feeder, "#888")
-                }
-            })
+        coords=f["geometry"]["coordinates"]
+        feeder=str(f["properties"].get("FEEDERID","UNK"))
 
-        return jsonify({"type": "FeatureCollection", "features": feats})
+        status="on"
+        if any(tuple(c) not in active for c in coords):
+            status="off"
 
-    except Exception as e:
-        print("❌ conductor error:", e)
-        return jsonify({"type": "FeatureCollection", "features": []})
+        feats.append({
+            "type":"Feature",
+            "geometry":f["geometry"],
+            "properties":{
+                "feeder":feeder,
+                "status":status,
+                "color":FEEDER_COLOR.get(feeder,"#888")
+            }
+        })
+
+    return jsonify({"type":"FeatureCollection","features":feats})
 
 # =========================
 @app.route("/api/dof")
 def dof():
-    try:
-        data = load("data/DOF.geojson")
 
-        feats = []
-        for f in data["features"]:
-            fid = str(f["properties"].get("FACILITYID", ""))
+    data=load("data/DOF.geojson")
+    feats=[]
 
-            if "S" not in fid.upper():
-                continue
+    for f in data["features"]:
+        fid=str(f["properties"].get("FACILITYID",""))
+        props=f["properties"]
 
-            pos = SWITCH_STATUS.get(fid, 1)
+        if "S" not in fid.upper():
+            continue
 
-            feats.append({
-                "type": "Feature",
-                "geometry": f["geometry"],
-                "properties": {
-                    "id": fid,
-                    "status": pos
-                }
-            })
+        pos=SWITCH_STATUS.get(fid,1)
+        sw_type=SWITCH_TYPE.get(fid,"Disconnect")
 
-        return jsonify({"type": "FeatureCollection", "features": feats})
+        # derive feeder from nearest edge
+        lon,lat=f["geometry"]["coordinates"]
+        _,idx=TREE.query([lon,lat])
+        near=NODE_LIST[idx]
+        feeder="UNK"
+        location=str(props.get("LOCATION", props.get("STREETNAME", props.get("SUBSTATION",""))))
 
-    except Exception as e:
-        print("❌ dof error:", e)
-        return jsonify({"type": "FeatureCollection", "features": []})
+        for u,v,d in G.edges(near, data=True):
+            feeder=d.get("feeder","UNK")
+            break
+
+        feats.append({
+            "type":"Feature",
+            "geometry":f["geometry"],
+            "properties":{
+                "id":fid,
+                "state":"CLOSE" if pos==1 else "OPEN",
+                "status":pos,
+                "type": sw_type,
+                "feeder": feeder,
+                "location": location
+            }
+        })
+
+    return jsonify({"type":"FeatureCollection","features":feats})
 
 # =========================
 @app.route("/toggle_switch")
 def toggle():
-    global CACHE_VALID
 
-    try:
-        fid = request.args.get("id")
+    fid=request.args.get("id")
 
-        if fid in SWITCH_STATUS:
-            SWITCH_STATUS[fid] = 1 - SWITCH_STATUS[fid]
-            CACHE_VALID = False  # 🔥 invalidate
+    if fid in SWITCH_STATUS:
+        SWITCH_STATUS[fid]=1-SWITCH_STATUS[fid]
 
-        return jsonify({"id": fid, "status": SWITCH_STATUS.get(fid)})
-
-    except Exception as e:
-        print("❌ toggle error:", e)
-        return jsonify({"id": None, "status": 0})
+    return jsonify({"id":fid,"status":SWITCH_STATUS[fid]})
 
 # =========================
 @app.route("/api/scada")
 def scada():
-    try:
-        active = get_active_nodes()
-        total = len(NODE_LIST)
 
-        return jsonify({
-            "fault_feeder": FAULT_FEEDER or "-",
-            "switch_open": sum(1 for v in SWITCH_STATUS.values() if v == 0),
-            "nodes_on": len(active),
-            "nodes_off": total - len(active)
-        })
+    active=get_active_nodes()
+    total=len(NODE_LIST)
+    nodes_on=len(active)
+    nodes_off=total-nodes_on
+    energized_pct=round(nodes_on/total*100,1) if total>0 else 0
 
-    except Exception as e:
-        print("❌ scada error:", e)
-        return jsonify({
-            "fault_feeder": "-",
-            "switch_open": 0,
-            "nodes_on": 0,
-            "nodes_off": 0
-        })
+    total_switches=len(SWITCH_STATUS)
+    open_switches=sum(1 for v in SWITCH_STATUS.values() if v==0)
+
+    # feeder summary
+    feeder_nodes={}
+    for u,v,d in G.edges(data=True):
+        fdr=d.get("feeder","UNK")
+        feeder_nodes.setdefault(fdr,set()).update([u,v])
+
+    feeder_status={}
+    for fdr,nodes in feeder_nodes.items():
+        on=len(nodes & active)
+        feeder_status[fdr]={
+            "color": FEEDER_COLOR.get(fdr,"#888"),
+            "total": len(nodes),
+            "on": on,
+            "pct": round(on/len(nodes)*100,1) if nodes else 0
+        }
+
+    return jsonify({
+        "fault_feeder": FAULT_FEEDER,
+        "fault_node": str(FAULT_NODE) if FAULT_NODE else None,
+        "open_switches": open_switches,
+        "total_switches": total_switches,
+        "nodes_on": nodes_on,
+        "nodes_off": nodes_off,
+        "energized_pct": energized_pct,
+        "feeders": feeder_status
+    })
 
 # =========================
-build()
+@app.route("/api/feeders")
+def feeders():
+    return jsonify({
+        "colors": FEEDER_COLOR,
+        "feeders": sorted(FEEDER_COLOR.keys())
+    })
 
 # =========================
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 3000))
-    app.run(host="0.0.0.0", port=port)
+if __name__=="__main__":
+    build()
+    port=int(os.environ.get("PORT",3000))
+    app.run(host="0.0.0.0",port=port)
