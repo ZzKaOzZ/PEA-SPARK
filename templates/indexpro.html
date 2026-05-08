@@ -58,13 +58,7 @@ body {
   min-width: 230px;
 }
 
-#brand .logo {
-  width: 32px; height: 32px;
-  background: linear-gradient(135deg, #0ea5e9, #6366f1);
-  border-radius: 8px;
-  display: flex; align-items: center; justify-content: center;
-  font-size: 16px;
-}
+#brand /* logo replaced by img */
 
 #brand .title-block .main { font-weight: 600; font-size: 14px; letter-spacing: .5px; }
 #brand .title-block .sub  { font-size: 10px; color: var(--muted); font-family: 'IBM Plex Mono', monospace; }
@@ -477,6 +471,26 @@ body.fault-mode #map { cursor: crosshair !important; }
   opacity: 1;
   transform: translateX(-50%) translateY(0);
 }
+
+/* ── BUILD ERROR BANNER ── */
+#build-error {
+  display: none;
+  position: fixed;
+  top: var(--topbar-h);
+  left: 0; right: var(--panel-w);
+  z-index: 2000;
+  background: rgba(239,68,68,.95);
+  color: #fff;
+  font-size: 12px;
+  font-family: 'IBM Plex Mono', monospace;
+  padding: 10px 16px;
+  border-bottom: 1px solid #b91c1c;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 180px;
+  overflow-y: auto;
+}
+#build-error.show { display: block; }
 </style>
 </head>
 <body>
@@ -485,7 +499,7 @@ body.fault-mode #map { cursor: crosshair !important; }
 <div id="topbar">
 
   <div id="brand">
-    <div class="logo">⚡</div>
+    <img src="/static/logo.png" alt="PEA SPARK" style="height:40px; width:auto; object-fit:contain; border-radius:6px;">
     <div class="title-block">
       <div class="main">PEA SARK</div>
       <div class="sub">Provincial Electricity Authority · Live network model</div>
@@ -529,6 +543,8 @@ body.fault-mode #map { cursor: crosshair !important; }
 
 <!-- ══════════════════════════ MAP ══════════════════════════ -->
 <div id="map"></div>
+<div id="build-error"></div>
+
 
 <!-- ══════════════════════════ RIGHT PANEL ══════════════════════════ -->
 <div id="panel">
@@ -753,27 +769,45 @@ function toggleLayer(name) {
 
 // ──────── DATA LOAD ────────
 function loadData() {
-  // conductor
-  fetch('/api/conductor').then(r => r.json()).then(d => {
-    linesLayer.clearLayers();
-    linesLayer.addData(d);
-    linesLayer.setStyle(styleLines);
-  });
+  fetch('/api/debug').then(r => r.json()).then(dbg => {
+    if (!dbg.build_ok) {
+      showBuildError(dbg.build_error || 'build() ล้มเหลว — ดู console ของ server');
+      return;
+    }
+    hideBuildError();
 
-  // switches + dof
-  fetch('/api/dof').then(r => r.json()).then(d => {
-    allSwitches = d.features || [];
-    renderSwitchLayer();
-    renderPanel();
-  });
+    fetch('/api/conductor').then(r => {
+      if (!r.ok) throw new Error('conductor HTTP ' + r.status);
+      return r.json();
+    }).then(d => {
+      if (d.error) { showBuildError(d.error); return; }
+      linesLayer.clearLayers();
+      linesLayer.addData(d);
+      linesLayer.setStyle(styleLines);
+    }).catch(e => showBuildError(e.message));
 
-  // scada
-  fetch('/api/scada').then(r => r.json()).then(d => {
-    scadaData = d;
-    updateTopBar(d);
-    if (currentTab === 'feeders') renderFeeders(d);
-    if (currentTab === 'status')  renderStatus(d);
-  });
+    fetch('/api/dof').then(r => {
+      if (!r.ok) throw new Error('dof HTTP ' + r.status);
+      return r.json();
+    }).then(d => {
+      if (d.error) { showBuildError(d.error); return; }
+      allSwitches = d.features || [];
+      renderSwitchLayer();
+      renderPanel();
+    }).catch(e => showBuildError(e.message));
+
+    fetch('/api/scada').then(r => {
+      if (!r.ok) throw new Error('scada HTTP ' + r.status);
+      return r.json();
+    }).then(d => {
+      if (d.error) { showBuildError(d.error); return; }
+      scadaData = d;
+      updateTopBar(d);
+      if (currentTab === 'feeders') renderFeeders(d);
+      if (currentTab === 'status')  renderStatus(d);
+    }).catch(e => showBuildError(e.message));
+
+  }).catch(e => showBuildError('เชื่อมต่อ server ไม่ได้: ' + e.message));
 }
 
 // ──────── SWITCH LAYER RENDER ────────
@@ -943,6 +977,17 @@ function showToast(msg, warn) {
   t.style.borderColor = warn ? 'var(--red)' : 'var(--green)';
   t.classList.add('show');
   setTimeout(() => t.classList.remove('show'), 2500);
+}
+
+
+// ──────── ERROR BANNER ────────
+function showBuildError(msg) {
+  var el = document.getElementById('build-error');
+  el.textContent = '⚠ ' + (msg || 'Server error');
+  el.classList.add('show');
+}
+function hideBuildError() {
+  document.getElementById('build-error').classList.remove('show');
 }
 
 // ──────── INIT ────────
