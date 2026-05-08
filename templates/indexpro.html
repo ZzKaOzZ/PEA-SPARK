@@ -997,7 +997,17 @@ function hideBuildError() {
 // ──────── INIT ────────
 switchTab('switches');
 loadData();
-setInterval(loadData, 5000);
+setInterval(() => {
+  fetch('/api/scada')
+    .then(r => r.json())
+    .then(d => {
+      scadaData = d;
+      updateTopBar(d);
+
+      if(currentTab==='feeders') renderFeeders(d);
+      if(currentTab==='status') renderStatus(d);
+    });
+}, 5000);
 </script>
 </body>
 </html>
