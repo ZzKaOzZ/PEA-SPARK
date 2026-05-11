@@ -2,7 +2,7 @@
 <html lang="th">
 <head>
 <meta charset="utf-8">
-<title>PEA SPARK</title>
+<title>PEA SARK</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
 <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -501,7 +501,7 @@ body.fault-mode #map { cursor: crosshair !important; }
   <div id="brand">
     <img src="/static/logo.png" alt="PEA SPARK" style="height:40px; width:auto; object-fit:contain; border-radius:6px;">
     <div class="title-block">
-      <div class="main">PEA SPARK</div>
+      <div class="main">PEA SARK</div>
       <div class="sub">Provincial Electricity Authority · Live network model</div>
     </div>
   </div>
@@ -607,7 +607,7 @@ L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
   maxZoom: 20
 }).addTo(map);
 
-var linesLayer = L.geoJSON(null).addTo(map);
+var linesLayer  = L.geoJSON(null, { style: styleLines }).addTo(map);
 var switchLayer = null;   // สร้างใหม่ทุกครั้งที่ renderSwitchLayer() เพื่อให้ pointToLayer ทำงาน
 
 var faultMarker = null;
@@ -781,13 +781,9 @@ function loadData() {
       return r.json();
     }).then(d => {
       if (d.error) { showBuildError(d.error); return; }
-      if (linesLayer) {
-  map.removeLayer(linesLayer);
-}
-
-linesLayer = L.geoJSON(d, {
-  style: styleLines
-}).addTo(map);
+      linesLayer.clearLayers();
+      linesLayer.addData(d);
+      linesLayer.setStyle(styleLines);
     }).catch(e => showBuildError(e.message));
 
     fetch('/api/dof').then(r => {
@@ -997,17 +993,7 @@ function hideBuildError() {
 // ──────── INIT ────────
 switchTab('switches');
 loadData();
-setInterval(() => {
-  fetch('/api/scada')
-    .then(r => r.json())
-    .then(d => {
-      scadaData = d;
-      updateTopBar(d);
-
-      if(currentTab==='feeders') renderFeeders(d);
-      if(currentTab==='status') renderStatus(d);
-    });
-}, 5000);
+setInterval(loadData, 5000);
 </script>
 </body>
 </html>
