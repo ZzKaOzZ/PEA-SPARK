@@ -2,995 +2,524 @@
 <html lang="th">
 <head>
 <meta charset="utf-8">
-<title>PEA SARK</title>
+<title>PEA SPARK</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
 <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
-<link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Thai:wght@300;400;500;600&display=swap" rel="stylesheet">
-
 <style>
-:root {
-  --bg:        #0b0f18;
-  --surface:   #111827;
-  --surface2:  #1a2235;
-  --border:    #1e2d45;
-  --text:      #e2e8f0;
-  --muted:     #64748b;
-  --accent:    #38bdf8;
-  --green:     #22c55e;
-  --red:       #ef4444;
-  --yellow:    #f59e0b;
-  --panel-w:   320px;
-  --topbar-h:  52px;
+:root{
+  --bg:#0b0f18; --surface:#111827; --surface2:#1a2235;
+  --border:#1e2d45; --text:#e2e8f0; --muted:#64748b;
+  --accent:#38bdf8; --green:#22c55e; --red:#ef4444; --yellow:#f59e0b;
+  --panel-w:320px; --topbar-h:52px;
 }
+*{box-sizing:border-box;margin:0;padding:0;}
+body{background:var(--bg);color:var(--text);font-family:'IBM Plex Sans Thai',sans-serif;font-size:13px;overflow:hidden;height:100vh;}
 
-* { box-sizing: border-box; margin:0; padding:0; }
-
-body {
-  background: var(--bg);
-  color: var(--text);
-  font-family: 'IBM Plex Sans Thai', sans-serif;
-  font-size: 13px;
-  overflow: hidden;
-  height: 100vh;
+/* ── TOPBAR ── */
+#topbar{
+  position:fixed;top:0;left:0;right:0;height:var(--topbar-h);
+  background:var(--surface);border-bottom:1px solid var(--border);
+  display:flex;align-items:center;z-index:1000;padding:0 16px;gap:0;
 }
+#brand{display:flex;align-items:center;gap:10px;padding-right:20px;border-right:1px solid var(--border);min-width:260px;}
+#brand img{height:38px;width:auto;object-fit:contain;}
+#brand .sub{font-size:10px;color:var(--muted);font-family:'IBM Plex Mono',monospace;white-space:nowrap;}
 
-/* ── TOP BAR ── */
-#topbar {
-  position: fixed;
-  top: 0; left: 0; right: 0;
-  height: var(--topbar-h);
-  background: var(--surface);
-  border-bottom: 1px solid var(--border);
-  display: flex;
-  align-items: center;
-  gap: 0;
-  z-index: 1000;
-  padding: 0 16px;
-}
+.stat-pill{display:flex;align-items:center;gap:10px;padding:0 20px;border-right:1px solid var(--border);height:100%;}
+.stat-pill .icon{font-size:15px;opacity:.7;}
+.stat-pill .label{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;line-height:1;}
+.stat-pill .value{font-family:'IBM Plex Mono',monospace;font-size:16px;font-weight:600;line-height:1;}
+.stat-pill .value.ok{color:var(--green);}
+.stat-pill .value.warn{color:var(--yellow);}
+.stat-pill .value.error{color:var(--red);}
+.stat-pill .value.info{color:var(--accent);}
 
-#brand {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding-right: 20px;
-  border-right: 1px solid var(--border);
-  min-width: 230px;
-}
-
-#brand /* logo replaced by img */
-
-#brand .title-block .main { font-weight: 600; font-size: 14px; letter-spacing: .5px; }
-#brand .title-block .sub  { font-size: 10px; color: var(--muted); font-family: 'IBM Plex Mono', monospace; }
-
-.stat-pill {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 0 20px;
-  border-right: 1px solid var(--border);
-  height: 100%;
-  cursor: default;
-}
-
-.stat-pill .icon { font-size: 15px; opacity: .7; }
-.stat-pill .label { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .8px; line-height: 1; }
-.stat-pill .value { font-family: 'IBM Plex Mono', monospace; font-size: 16px; font-weight: 600; line-height: 1; }
-.stat-pill .value.ok    { color: var(--green); }
-.stat-pill .value.warn  { color: var(--yellow); }
-.stat-pill .value.error { color: var(--red); }
-.stat-pill .value.info  { color: var(--accent); }
-
-#topbar-actions {
-  margin-left: auto;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 14px;
-  border-radius: 6px;
-  border: 1px solid var(--border);
-  background: var(--surface2);
-  color: var(--text);
-  font-size: 12px;
-  font-family: 'IBM Plex Sans Thai', sans-serif;
-  cursor: pointer;
-  transition: all .15s;
-}
-
-.btn:hover { background: var(--border); }
-
-.btn.primary {
-  background: rgba(56,189,248,.15);
-  border-color: var(--accent);
-  color: var(--accent);
-}
-
-.btn.primary:hover { background: rgba(56,189,248,.25); }
-
-.btn.danger {
-  background: rgba(239,68,68,.12);
-  border-color: var(--red);
-  color: var(--red);
-}
-
-.btn.danger:hover  { background: rgba(239,68,68,.22); }
-
-.btn.active-fault {
-  animation: pulseBtn 1.4s ease-in-out infinite;
-}
-
-@keyframes pulseBtn {
-  0%,100% { box-shadow: 0 0 0 0 rgba(239,68,68,.4); }
-  50%      { box-shadow: 0 0 0 6px rgba(239,68,68,0); }
-}
-
-#refresh-btn { padding: 6px 10px; }
+#topbar-actions{margin-left:auto;display:flex;align-items:center;gap:8px;}
+.btn{display:inline-flex;align-items:center;gap:6px;padding:6px 14px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:12px;font-family:'IBM Plex Sans Thai',sans-serif;cursor:pointer;transition:all .15s;}
+.btn:hover{background:var(--border);}
+.btn.primary{background:rgba(56,189,248,.15);border-color:var(--accent);color:var(--accent);}
+.btn.primary:hover{background:rgba(56,189,248,.25);}
+.btn.danger{background:rgba(239,68,68,.12);border-color:var(--red);color:var(--red);}
+.btn.danger:hover{background:rgba(239,68,68,.22);}
 
 /* ── MAP ── */
-#map {
-  position: fixed;
-  top: var(--topbar-h);
-  left: 0;
-  right: var(--panel-w);
-  bottom: 0;
-  z-index: 1;
-}
+#map{position:fixed;top:var(--topbar-h);left:0;right:var(--panel-w);bottom:0;z-index:1;}
+.leaflet-container{background:#080e18;}
+.leaflet-control-zoom a{background:var(--surface)!important;color:var(--text)!important;border-color:var(--border)!important;}
+.leaflet-control-attribution{display:none;}
 
-/* dark tiles overlay */
-#map::after {
-  content: '';
-  position: absolute; inset: 0;
-  background: rgba(0,0,0,.35);
-  pointer-events: none;
-  z-index: 200;
-}
+/* ── FAULT MARKER ── */
+.fault-marker{width:18px;height:18px;border:2px solid var(--red);border-radius:50%;background:rgba(239,68,68,.25);animation:pulse 1.2s ease-in-out infinite;}
+@keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(239,68,68,.6);}50%{box-shadow:0 0 0 10px rgba(239,68,68,0);}}
+body.fault-mode #map{cursor:crosshair!important;}
 
-/* ── FAULT CROSSHAIR ── */
-.fault-marker {
-  width: 18px; height: 18px;
-  border: 2px solid var(--red);
-  border-radius: 50%;
-  background: rgba(239,68,68,.25);
-  animation: pulse 1.2s ease-in-out infinite;
-}
-
-@keyframes pulse {
-  0%,100% { box-shadow: 0 0 0 0 rgba(239,68,68,.6); }
-  50%      { box-shadow: 0 0 0 10px rgba(239,68,68,0); }
-}
+/* ── ERROR BANNER ── */
+#build-error{display:none;position:fixed;top:var(--topbar-h);left:0;right:var(--panel-w);z-index:2000;background:rgba(239,68,68,.95);color:#fff;font-size:12px;font-family:'IBM Plex Mono',monospace;padding:10px 16px;border-bottom:1px solid #b91c1c;white-space:pre-wrap;word-break:break-all;max-height:160px;overflow-y:auto;}
+#build-error.show{display:block;}
 
 /* ── RIGHT PANEL ── */
-#panel {
-  position: fixed;
-  top: var(--topbar-h);
-  right: 0;
-  width: var(--panel-w);
-  bottom: 0;
-  background: var(--surface);
-  border-left: 1px solid var(--border);
-  display: flex;
-  flex-direction: column;
-  z-index: 900;
-}
+#panel{position:fixed;top:var(--topbar-h);right:0;width:var(--panel-w);bottom:0;background:var(--surface);border-left:1px solid var(--border);display:flex;flex-direction:column;z-index:900;}
 
-/* tabs */
-.tabs {
-  display: flex;
-  border-bottom: 1px solid var(--border);
-  flex-shrink: 0;
-}
+.tabs{display:flex;border-bottom:1px solid var(--border);flex-shrink:0;}
+.tab{flex:1;text-align:center;padding:12px 0;cursor:pointer;font-size:12px;font-weight:500;color:var(--muted);border-bottom:2px solid transparent;transition:all .15s;letter-spacing:.5px;}
+.tab.active{color:var(--accent);border-bottom-color:var(--accent);}
 
-.tab {
-  flex: 1;
-  text-align: center;
-  padding: 12px 0;
-  cursor: pointer;
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--muted);
-  border-bottom: 2px solid transparent;
-  transition: all .15s;
-  letter-spacing: .5px;
-}
+#search-wrap{padding:10px 12px;border-bottom:1px solid var(--border);flex-shrink:0;}
+#search{width:100%;background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:7px 10px;border-radius:6px;font-size:12px;font-family:'IBM Plex Sans Thai',sans-serif;outline:none;}
+#search::placeholder{color:var(--muted);}
+#search:focus{border-color:var(--accent);}
 
-.tab.active {
-  color: var(--accent);
-  border-bottom-color: var(--accent);
-}
-
-/* search */
-#search-wrap {
-  padding: 10px 12px;
-  border-bottom: 1px solid var(--border);
-  flex-shrink: 0;
-}
-
-#search {
-  width: 100%;
-  background: var(--surface2);
-  border: 1px solid var(--border);
-  color: var(--text);
-  padding: 7px 10px;
-  border-radius: 6px;
-  font-size: 12px;
-  font-family: 'IBM Plex Sans Thai', sans-serif;
-  outline: none;
-}
-
-#search::placeholder { color: var(--muted); }
-#search:focus { border-color: var(--accent); }
-
-/* list */
-#panel-content { flex: 1; overflow-y: auto; }
-
-#panel-content::-webkit-scrollbar { width: 4px; }
-#panel-content::-webkit-scrollbar-track { background: transparent; }
-#panel-content::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+#panel-content{flex:1;overflow-y:auto;}
+#panel-content::-webkit-scrollbar{width:4px;}
+#panel-content::-webkit-scrollbar-thumb{background:var(--border);border-radius:4px;}
 
 /* switch row */
-.sw-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 14px;
-  border-bottom: 1px solid var(--border);
-  cursor: pointer;
-  transition: background .12s;
-}
+.sw-row{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--border);cursor:pointer;transition:background .12s;}
+.sw-row:hover{background:var(--surface2);}
+.sw-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0;}
+.sw-dot.closed{background:var(--green);box-shadow:0 0 6px var(--green);}
+.sw-dot.open{background:var(--red);box-shadow:0 0 6px var(--red);}
+.sw-info{flex:1;overflow:hidden;}
+.sw-id{font-family:'IBM Plex Mono',monospace;font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.sw-sub{font-size:10px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px;}
+.sw-toggle{width:38px;height:20px;border-radius:10px;position:relative;flex-shrink:0;transition:background .2s;}
+.sw-toggle.on{background:rgba(34,197,94,.4);border:1px solid var(--green);}
+.sw-toggle.off{background:rgba(239,68,68,.2);border:1px solid var(--red);}
+.sw-toggle::after{content:'';position:absolute;top:2px;width:14px;height:14px;border-radius:50%;transition:all .2s;}
+.sw-toggle.on::after{left:21px;background:var(--green);}
+.sw-toggle.off::after{left:2px;background:var(--red);}
 
-.sw-row:hover { background: var(--surface2); }
+/* feeder row */
+.feeder-row{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--border);}
+.feeder-swatch{width:12px;height:12px;border-radius:3px;flex-shrink:0;}
+.feeder-name{font-family:'IBM Plex Mono',monospace;font-size:12px;font-weight:600;flex:1;}
+.feeder-bar-wrap{width:70px;}
+.feeder-bar-bg{height:4px;background:var(--border);border-radius:2px;overflow:hidden;}
+.feeder-bar-fill{height:100%;border-radius:2px;transition:width .4s;}
+.feeder-pct{font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--muted);text-align:right;margin-top:2px;}
 
-.sw-dot {
-  width: 10px; height: 10px;
-  border-radius: 50%;
-  flex-shrink: 0;
-}
+/* status */
+.status-section{padding:14px;}
+.status-kv{display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border);font-size:12px;}
+.status-kv .k{color:var(--muted);}
+.status-kv .v{font-family:'IBM Plex Mono',monospace;font-weight:600;}
+.status-kv .v.green{color:var(--green);} .status-kv .v.red{color:var(--red);}
+.status-kv .v.yellow{color:var(--yellow);} .status-kv .v.accent{color:var(--accent);}
 
-.sw-dot.closed { background: var(--green); box-shadow: 0 0 6px var(--green); }
-.sw-dot.open   { background: var(--red);   box-shadow: 0 0 6px var(--red); }
+/* ── LAYERS ── */
+#layers{position:fixed;bottom:20px;left:14px;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:10px 14px;z-index:800;min-width:155px;}
+.lyr-title{font-size:10px;text-transform:uppercase;letter-spacing:1px;color:var(--muted);margin-bottom:8px;}
+.lyr-row{display:flex;align-items:center;gap:8px;padding:5px 0;cursor:pointer;font-size:12px;user-select:none;}
+.lyr-row.inactive{opacity:.35;}
 
-.sw-info { flex: 1; overflow: hidden; }
+/* ── POPUP ── */
+.leaflet-popup-content-wrapper{background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:8px;box-shadow:0 8px 32px rgba(0,0,0,.6);font-family:'IBM Plex Sans Thai',sans-serif;font-size:12px;}
+.leaflet-popup-tip{background:var(--surface);}
+.leaflet-popup-close-button{color:var(--muted)!important;}
+.popup-id{font-family:'IBM Plex Mono',monospace;font-weight:600;font-size:13px;margin-bottom:6px;}
+.popup-row{display:flex;justify-content:space-between;gap:20px;padding:3px 0;}
+.popup-row .pk{color:var(--muted);} .popup-row .pv{font-weight:500;}
+.popup-btn{width:100%;margin-top:10px;padding:6px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);cursor:pointer;font-size:12px;font-family:'IBM Plex Sans Thai',sans-serif;transition:background .15s;}
+.popup-btn:hover{background:var(--border);}
+.popup-btn.open-sw{border-color:var(--red);color:var(--red);}
+.popup-btn.close-sw{border-color:var(--green);color:var(--green);}
 
-.sw-id {
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 12px;
-  font-weight: 600;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.sw-sub {
-  font-size: 10px;
-  color: var(--muted);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  margin-top: 2px;
-}
-
-.sw-toggle {
-  width: 38px; height: 20px;
-  border-radius: 10px;
-  background: var(--border);
-  position: relative;
-  flex-shrink: 0;
-  transition: background .2s;
-}
-
-.sw-toggle.on  { background: rgba(34,197,94,.4); border: 1px solid var(--green); }
-.sw-toggle.off { background: rgba(239,68,68,.2); border: 1px solid var(--red); }
-
-.sw-toggle::after {
-  content: '';
-  position: absolute;
-  top: 2px;
-  width: 14px; height: 14px;
-  border-radius: 50%;
-  transition: all .2s;
-}
-
-.sw-toggle.on::after  { left: 21px; background: var(--green); }
-.sw-toggle.off::after { left:  2px; background: var(--red); }
-
-/* feeder tab */
-.feeder-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 14px;
-  border-bottom: 1px solid var(--border);
-}
-
-.feeder-swatch {
-  width: 12px; height: 12px;
-  border-radius: 3px;
-  flex-shrink: 0;
-}
-
-.feeder-name {
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 12px;
-  font-weight: 600;
-  flex: 1;
-}
-
-.feeder-bar-wrap { width: 70px; }
-
-.feeder-bar-bg {
-  height: 4px;
-  background: var(--border);
-  border-radius: 2px;
-  overflow: hidden;
-}
-
-.feeder-bar-fill {
-  height: 100%;
-  border-radius: 2px;
-  transition: width .4s;
-}
-
-.feeder-pct {
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 10px;
-  color: var(--muted);
-  text-align: right;
-  margin-top: 2px;
-}
-
-/* status tab */
-.status-section { padding: 14px; }
-
-.status-kv {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 8px 0;
-  border-bottom: 1px solid var(--border);
-  font-size: 12px;
-}
-
-.status-kv .k { color: var(--muted); }
-.status-kv .v { font-family: 'IBM Plex Mono', monospace; font-weight: 600; }
-.status-kv .v.green  { color: var(--green); }
-.status-kv .v.red    { color: var(--red); }
-.status-kv .v.yellow { color: var(--yellow); }
-.status-kv .v.accent { color: var(--accent); }
-
-/* ── LAYER CONTROL ── */
-#layers {
-  position: fixed;
-  bottom: 20px;
-  left: 14px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 10px 14px;
-  z-index: 800;
-  min-width: 150px;
-}
-
-#layers .lyr-title {
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 1px;
-  color: var(--muted);
-  margin-bottom: 8px;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.lyr-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 5px 0;
-  cursor: pointer;
-  font-size: 12px;
-}
-
-.lyr-dot {
-  width: 10px; height: 10px;
-  border-radius: 50%;
-  border: 2px solid;
-  flex-shrink: 0;
-}
-
-.lyr-row.active .lyr-dot { background: currentColor; opacity: 1; }
-.lyr-row:not(.active) .lyr-dot { opacity: .3; }
-
-/* ── MAP CURSOR (fault mode) ── */
-body.fault-mode #map { cursor: crosshair !important; }
-
-/* ── LEAFLET overrides ── */
-.leaflet-container { background: #080e18; }
-.leaflet-control-attribution { display: none; }
-.leaflet-control-zoom a {
-  background: var(--surface) !important;
-  color: var(--text) !important;
-  border-color: var(--border) !important;
-}
-
-/* popup */
-.leaflet-popup-content-wrapper {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  color: var(--text);
-  border-radius: 8px;
-  box-shadow: 0 8px 32px rgba(0,0,0,.6);
-  font-family: 'IBM Plex Sans Thai', sans-serif;
-  font-size: 12px;
-}
-
-.leaflet-popup-tip { background: var(--surface); }
-.leaflet-popup-close-button { color: var(--muted) !important; }
-
-.popup-id { font-family:'IBM Plex Mono',monospace; font-weight:600; font-size:13px; margin-bottom:6px; }
-.popup-row { display:flex; justify-content:space-between; gap:20px; padding:3px 0; }
-.popup-row .pk { color:var(--muted); }
-.popup-row .pv { font-weight:500; }
-.popup-btn {
-  width:100%; margin-top:10px;
-  padding:6px; border-radius:6px;
-  border:1px solid var(--border);
-  background:var(--surface2); color:var(--text);
-  cursor:pointer; font-size:12px;
-  font-family:'IBM Plex Sans Thai',sans-serif;
-  transition: background .15s;
-}
-.popup-btn:hover { background:var(--border); }
-.popup-btn.open  { border-color:var(--red);   color:var(--red); }
-.popup-btn.close { border-color:var(--green); color:var(--green); }
-
-/* toast */
-#toast {
-  position: fixed;
-  bottom: 80px;
-  left: 50%;
-  transform: translateX(-50%) translateY(20px);
-  background: var(--surface);
-  border: 1px solid var(--border);
-  color: var(--text);
-  padding: 8px 18px;
-  border-radius: 20px;
-  font-size: 12px;
-  opacity: 0;
-  transition: all .25s;
-  z-index: 2000;
-  pointer-events: none;
-}
-
-#toast.show {
-  opacity: 1;
-  transform: translateX(-50%) translateY(0);
-}
-
-/* ── BUILD ERROR BANNER ── */
-#build-error {
-  display: none;
-  position: fixed;
-  top: var(--topbar-h);
-  left: 0; right: var(--panel-w);
-  z-index: 2000;
-  background: rgba(239,68,68,.95);
-  color: #fff;
-  font-size: 12px;
-  font-family: 'IBM Plex Mono', monospace;
-  padding: 10px 16px;
-  border-bottom: 1px solid #b91c1c;
-  white-space: pre-wrap;
-  word-break: break-all;
-  max-height: 180px;
-  overflow-y: auto;
-}
-#build-error.show { display: block; }
+/* ── TOAST ── */
+#toast{position:fixed;bottom:80px;left:50%;transform:translateX(-50%) translateY(20px);background:var(--surface);border:1px solid var(--border);color:var(--text);padding:8px 18px;border-radius:20px;font-size:12px;opacity:0;transition:all .25s;z-index:2000;pointer-events:none;}
+#toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
 </style>
 </head>
 <body>
 
-<!-- ══════════════════════════ TOP BAR ══════════════════════════ -->
+<!-- TOPBAR -->
 <div id="topbar">
-
   <div id="brand">
-    <img src="/static/logo.png" alt="PEA SPARK" style="height:40px; width:auto; object-fit:contain; border-radius:6px;">
-    <div class="title-block">
-      <div class="main">PEA SARK</div>
+    <img src="/static/logo.png" alt="PEA SPARK" onerror="this.style.display='none'">
+    <div>
+      <div style="font-weight:600;font-size:14px;letter-spacing:.5px;">PEA SARK</div>
       <div class="sub">Provincial Electricity Authority · Live network model</div>
     </div>
   </div>
 
-  <!-- ENERGIZED -->
   <div class="stat-pill">
     <div class="icon">📶</div>
-    <div>
-      <div class="label">Energized</div>
-      <div class="value ok" id="tb-energized">--%</div>
-    </div>
+    <div><div class="label">Energized</div><div class="value ok" id="tb-energized">--%</div></div>
   </div>
-
-  <!-- OPEN SWITCHES -->
   <div class="stat-pill">
     <div class="icon">⭕</div>
-    <div>
-      <div class="label">Open Switches</div>
-      <div class="value info" id="tb-switches">-- / --</div>
-    </div>
+    <div><div class="label">Open Switches</div><div class="value info" id="tb-switches">-- / --</div></div>
   </div>
-
-  <!-- FAULT FEEDER -->
   <div class="stat-pill">
     <div class="icon">⚠️</div>
-    <div>
-      <div class="label">Fault Feeder</div>
-      <div class="value error" id="tb-fault">none</div>
-    </div>
+    <div><div class="label">Fault Feeder</div><div class="value ok" id="tb-fault">none</div></div>
   </div>
 
   <div id="topbar-actions">
-    <button class="btn" id="refresh-btn" title="Refresh" onclick="loadData()">🔄</button>
+    <button class="btn" onclick="loadData()" title="Refresh">🔄</button>
     <button class="btn primary" id="place-fault-btn" onclick="toggleFaultMode()">⊕ Place fault</button>
-    <button class="btn danger" id="clear-fault-btn" onclick="clearFault()">✕ Clear fault</button>
+    <button class="btn danger"  id="clear-fault-btn" onclick="clearFault()">✕ Clear fault</button>
   </div>
-
 </div>
 
-<!-- ══════════════════════════ MAP ══════════════════════════ -->
+<!-- MAP -->
 <div id="map"></div>
 <div id="build-error"></div>
 
-
-<!-- ══════════════════════════ RIGHT PANEL ══════════════════════════ -->
+<!-- RIGHT PANEL -->
 <div id="panel">
   <div class="tabs">
     <div class="tab active" data-tab="switches" onclick="switchTab('switches')">Switches</div>
     <div class="tab"        data-tab="feeders"  onclick="switchTab('feeders')">Feeders</div>
     <div class="tab"        data-tab="status"   onclick="switchTab('status')">Status</div>
   </div>
-
   <div id="search-wrap">
-    <input id="search" type="text" placeholder="Search switch id, feeder, location…" oninput="filterSwitches()">
+    <input id="search" type="text" placeholder="Search switch id, feeder, location…" oninput="renderSwitches()">
   </div>
-
   <div id="panel-content"></div>
 </div>
 
-<!-- ══════════════════════════ LAYER CONTROL ══════════════════════════ -->
+<!-- LAYERS -->
 <div id="layers">
   <div class="lyr-title">⊞ Layers</div>
-
-  <!-- Switches: วงกลมเขียว -->
-  <div class="lyr-row active" id="lyr-switches" onclick="toggleLayer('switches')" style="color:#22c55e;">
-    <div class="lyr-dot" style="border-color:#22c55e;"></div> Switches
+  <!-- Disconnect/LB/Switch → วงกลม/สี่เหลี่ยม/ข้าวหลามตัด สีเขียว -->
+  <div class="lyr-row active" id="lyr-switches" onclick="toggleLayer('switches')">
+    <div style="width:10px;height:10px;border-radius:50%;background:#22c55e;box-shadow:0 0 5px #22c55e;flex-shrink:0;"></div>
+    <span style="color:#22c55e;">Switches</span>
   </div>
-
-  <!-- Reclosers: สามเหลี่ยมส้ม -->
-  <div class="lyr-row active" id="lyr-reclosers" onclick="toggleLayer('reclosers')" style="color:#f59e0b;">
-    <div style="
-      width:0; height:0;
-      border-left:6px solid transparent;
-      border-right:6px solid transparent;
-      border-bottom:11px solid #f59e0b;
-      flex-shrink:0;
-      opacity:1;
-    "></div> Reclosers
+  <!-- Recloser → สามเหลี่ยมส้ม -->
+  <div class="lyr-row active" id="lyr-reclosers" onclick="toggleLayer('reclosers')">
+    <div style="width:0;height:0;border-left:6px solid transparent;border-right:6px solid transparent;border-bottom:11px solid #f59e0b;flex-shrink:0;"></div>
+    <span style="color:#f59e0b;">Reclosers</span>
   </div>
-
-  <!-- Transformers: วงกลมเหลือง (placeholder ถ้ายังไม่มี layer จริง) -->
-  <div class="lyr-row active" id="lyr-transformers" onclick="toggleLayer('transformers')" style="color:#facc15;">
-    <div style="
-      width:10px; height:10px;
-      background:#facc15;
-      border-radius:2px;
-      flex-shrink:0;
-    "></div> Transformers
+  <!-- Transformer → สี่เหลี่ยมเหลือง -->
+  <div class="lyr-row active" id="lyr-transformers" onclick="toggleLayer('transformers')">
+    <div style="width:10px;height:10px;background:#facc15;border-radius:2px;flex-shrink:0;"></div>
+    <span style="color:#facc15;">Transformers</span>
   </div>
 </div>
 
 <div id="toast"></div>
 
-<!-- ══════════════════════════ SCRIPT ══════════════════════════ -->
 <script>
-// ──────── MAP INIT ────────
-var map = L.map('map', {
-  zoomControl: true,
-  attributionControl: false
-}).setView([13.75, 100.5], 13);
+// ══════════════════════════════════════════════════════════
+// MAP
+// ══════════════════════════════════════════════════════════
+var map = L.map('map',{zoomControl:true,attributionControl:false})
+           .setView([13.75,100.5],10);
 
-L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-  maxZoom: 20
-}).addTo(map);
+L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',{maxZoom:20}).addTo(map);
 
-var linesLayer  = L.geoJSON(null, { style: styleLines }).addTo(map);
-var switchLayer = null;   // สร้างใหม่ทุกครั้งที่ renderSwitchLayer() เพื่อให้ pointToLayer ทำงาน
-
+var linesLayer  = null;
+var switchLayer = null;
 var faultMarker = null;
 var faultMode   = false;
-
-// layer visibility
-var layerVis = { switches: true, reclosers: true, transformers: true };
-
-// all switches data cache
 var allSwitches = [];
 var currentTab  = 'switches';
 var scadaData   = {};
+var layerVis    = {switches:true, reclosers:true, transformers:true};
+var didFitBounds = false;   // zoom to data ครั้งแรก
 
-// ──────── STYLE ────────
-function styleLines(f) {
+// ══════════════════════════════════════════════════════════
+// LINE STYLE
+// ══════════════════════════════════════════════════════════
+function styleLines(f){
   var on = f.properties.status === "on";
-  return {
-    color:   on ? f.properties.color : "#2a3a52",
-    weight:  on ? 2.5 : 1.5,
-    opacity: on ? 0.9 : 0.5
-  };
+  return {color: on ? f.properties.color : "#2a3a52", weight: on ? 2.5 : 1.5, opacity: on ? 0.9 : 0.45};
 }
 
-// สัญลักษณ์แต่ละประเภท:
-//   Disconnect  → ⬤ วงกลม       สีสถานะ (เขียว/แดง)
-//   Load Break  → ■ สี่เหลี่ยม    สีสถานะ (เขียว/แดง)
-//   Switch      → ◆ ข้าวหลามตัด  สีสถานะ (เขียว/แดง)
-//   Recloser    → ▲ สามเหลี่ยม  สีส้ม/เหลือง (แยกออกชัดเจน)
-function makeSwitchMarker(f, latlng) {
-  var p = f.properties;
+// ══════════════════════════════════════════════════════════
+// SWITCH MARKERS  (คงสัญลักษณ์จาก 7788)
+//   Disconnect  → ⬤ วงกลม       เขียว/แดง
+//   Load Break  → ■ สี่เหลี่ยม    เขียว/แดง
+//   Switch      → ◆ ข้าวหลามตัด  เขียว/แดง
+//   Recloser    → ▲ สามเหลี่ยม   ส้ม/เหลือง
+// ══════════════════════════════════════════════════════════
+function makeSwitchMarker(f, latlng){
+  var p      = f.properties;
   var isOpen = p.status === 0;
-  var t = (p.type || 'disconnect').toLowerCase();
-  var stateColor = isOpen ? '#ef4444' : '#22c55e';
-  var html = '', sz = [8,8], anc = [4,4];
+  var t      = (p.type||'disconnect').toLowerCase();
+  var sc     = isOpen ? '#ef4444' : '#22c55e';
+  var html, sz, anc;
 
-  if (t === 'recloser') {
+  if(t === 'recloser'){
     var rc = isOpen ? '#fb923c' : '#f59e0b';
-    html = `<div style="width:0;height:0;
-      border-left:7px solid transparent;
-      border-right:7px solid transparent;
-      border-bottom:13px solid ${rc};
-      filter:drop-shadow(0 0 4px ${rc});"></div>`;
+    html = `<div style="width:0;height:0;border-left:7px solid transparent;border-right:7px solid transparent;border-bottom:13px solid ${rc};filter:drop-shadow(0 0 4px ${rc});"></div>`;
     sz=[14,13]; anc=[7,7];
-
-  } else if (t === 'load break') {
-    html = `<div style="width:10px;height:10px;
-      background:${stateColor};
-      border:2px solid rgba(255,255,255,.4);
-      box-shadow:0 0 6px ${stateColor};"></div>`;
+  } else if(t === 'load break'){
+    html = `<div style="width:10px;height:10px;background:${sc};border:2px solid rgba(255,255,255,.4);box-shadow:0 0 6px ${sc};"></div>`;
     sz=[10,10]; anc=[5,5];
-
-  } else if (t === 'switch') {
-    html = `<div style="width:9px;height:9px;
-      background:${stateColor};
-      border:2px solid rgba(255,255,255,.4);
-      box-shadow:0 0 6px ${stateColor};
-      transform:rotate(45deg);"></div>`;
+  } else if(t === 'switch'){
+    html = `<div style="width:9px;height:9px;background:${sc};border:2px solid rgba(255,255,255,.4);box-shadow:0 0 6px ${sc};transform:rotate(45deg);"></div>`;
     sz=[11,11]; anc=[5,5];
-
   } else {
-    // Disconnect — วงกลม
-    html = `<div style="width:8px;height:8px;
-      border-radius:50%;
-      background:${stateColor};
-      border:2px solid rgba(255,255,255,.35);
-      box-shadow:0 0 ${isOpen?8:5}px ${stateColor};"></div>`;
+    html = `<div style="width:8px;height:8px;border-radius:50%;background:${sc};border:2px solid rgba(255,255,255,.35);box-shadow:0 0 ${isOpen?8:5}px ${sc};"></div>`;
+    sz=[8,8]; anc=[4,4];
   }
-
-  return L.marker(latlng, {
-    icon: L.divIcon({ className:'', html, iconSize:sz, iconAnchor:anc }),
-    zIndexOffset: t === 'recloser' ? 100 : 0
+  return L.marker(latlng,{
+    icon: L.divIcon({className:'',html,iconSize:sz,iconAnchor:anc}),
+    zIndexOffset: t==='recloser'?100:0
   });
 }
 
-function showSwitchPopup(f, layer) {
+// ══════════════════════════════════════════════════════════
+// POPUP
+// ══════════════════════════════════════════════════════════
+function showSwitchPopup(f, layer){
   var p = f.properties;
   var isOpen = p.status === 0;
-  var html = `
+  layer.bindPopup(`
     <div class="popup-id">${p.id}</div>
-    <div class="popup-row"><span class="pk">Feeder</span><span class="pv">${p.feeder||'UNK'}</span></div>
+    <div class="popup-row"><span class="pk">Feeder</span><span class="pv">${p.feeder||'-'}</span></div>
     <div class="popup-row"><span class="pk">Type</span><span class="pv">${p.type||'Disconnect'}</span></div>
     <div class="popup-row"><span class="pk">Location</span><span class="pv">${p.location||'-'}</span></div>
-    <div class="popup-row">
-      <span class="pk">State</span>
+    <div class="popup-row"><span class="pk">State</span>
       <span class="pv" style="color:${isOpen?'#ef4444':'#22c55e'}">${isOpen?'OPEN':'CLOSE'}</span>
     </div>
-    <button class="popup-btn ${isOpen?'close':'open'}" onclick="toggleSwitch('${p.id}')">
-      ${isOpen ? '⊕ Close switch' : '⊖ Open switch'}
+    <button class="popup-btn ${isOpen?'close-sw':'open-sw'}" onclick="toggleSwitch('${p.id}')">
+      ${isOpen?'⊕ Close switch':'⊖ Open switch'}
     </button>
-  `;
-  layer.bindPopup(html, { maxWidth: 240 }).openPopup();
+  `,{maxWidth:240}).openPopup();
 }
 
-// ──────── TOGGLE SWITCH ────────
-function toggleSwitch(id) {
-  fetch('/toggle_switch?id=' + id)
-    .then(() => { loadData(); showToast('Switch ' + id + ' toggled'); });
+function toggleSwitch(id){
+  fetch('/toggle_switch?id='+id).then(()=>{loadData();showToast('Toggled: '+id);});
 }
 
-// ──────── FAULT MODE ────────
-function toggleFaultMode() {
-  faultMode = !faultMode;
-  document.body.classList.toggle('fault-mode', faultMode);
-  var btn = document.getElementById('place-fault-btn');
-  btn.textContent = faultMode ? '✕ Cancel fault' : '⊕ Place fault';
-  btn.classList.toggle('danger', faultMode);
-  btn.classList.toggle('primary', !faultMode);
-  if (faultMode) showToast('Click on map to place fault');
-}
+// ══════════════════════════════════════════════════════════
+// RENDER SWITCH LAYER (สร้างใหม่ทุกครั้ง)
+// ══════════════════════════════════════════════════════════
+function renderSwitchLayer(){
+  if(switchLayer) map.removeLayer(switchLayer);
 
-function clearFault() {
-  fetch('/clear_fault').then(() => {
-    if (faultMarker) { map.removeLayer(faultMarker); faultMarker = null; }
-    faultMode = false;
-    document.body.classList.remove('fault-mode');
-    var btn = document.getElementById('place-fault-btn');
-    btn.textContent = '⊕ Place fault';
-    btn.classList.remove('danger');
-    btn.classList.add('primary');
-    loadData();
-    showToast('Fault cleared');
-  });
-}
-
-map.on('click', function(e) {
-  if (!faultMode) return;
-  var lat = e.latlng.lat, lon = e.latlng.lng;
-
-  fetch('/fault?lat=' + lat + '&lon=' + lon).then(r => r.json()).then(d => {
-    if (faultMarker) map.removeLayer(faultMarker);
-    faultMarker = L.marker([lat, lon], {
-      icon: L.divIcon({
-        className: '',
-        html: '<div class="fault-marker"></div>',
-        iconSize: [18,18], iconAnchor: [9,9]
-      }),
-      zIndexOffset: 1000
-    }).addTo(map).bindPopup(`<b>⚠ Fault</b><br>Feeder: ${d.feeder}`).openPopup();
-
-    faultMode = false;
-    document.body.classList.remove('fault-mode');
-    var btn = document.getElementById('place-fault-btn');
-    btn.textContent = '⊕ Place fault';
-    btn.classList.remove('danger');
-    btn.classList.add('primary');
-
-    loadData();
-    showToast('Fault placed on feeder ' + d.feeder, true);
-  });
-});
-
-// ──────── LAYER TOGGLE ────────
-function toggleLayer(name) {
-  layerVis[name] = !layerVis[name];
-  var el = document.getElementById('lyr-' + name);
-  el.classList.toggle('active', layerVis[name]);
-  renderSwitchLayer();
-}
-
-// ──────── DATA LOAD ────────
-function loadData() {
-  fetch('/api/debug').then(r => r.json()).then(dbg => {
-    if (!dbg.build_ok) {
-      showBuildError(dbg.build_error || 'build() ล้มเหลว — ดู console ของ server');
-      return;
-    }
-    hideBuildError();
-
-    fetch('/api/conductor').then(r => {
-      if (!r.ok) throw new Error('conductor HTTP ' + r.status);
-      return r.json();
-    }).then(d => {
-      if (d.error) { showBuildError(d.error); return; }
-      linesLayer.clearLayers();
-      linesLayer.addData(d);
-      linesLayer.setStyle(styleLines);
-    }).catch(e => showBuildError(e.message));
-
-    fetch('/api/dof').then(r => {
-      if (!r.ok) throw new Error('dof HTTP ' + r.status);
-      return r.json();
-    }).then(d => {
-      if (d.error) { showBuildError(d.error); return; }
-      allSwitches = d.features || [];
-      renderSwitchLayer();
-      renderPanel();
-    }).catch(e => showBuildError(e.message));
-
-    fetch('/api/scada').then(r => {
-      if (!r.ok) throw new Error('scada HTTP ' + r.status);
-      return r.json();
-    }).then(d => {
-      if (d.error) { showBuildError(d.error); return; }
-      scadaData = d;
-      updateTopBar(d);
-      if (currentTab === 'feeders') renderFeeders(d);
-      if (currentTab === 'status')  renderStatus(d);
-    }).catch(e => showBuildError(e.message));
-
-  }).catch(e => showBuildError('เชื่อมต่อ server ไม่ได้: ' + e.message));
-}
-
-// ──────── SWITCH LAYER RENDER ────────
-function renderSwitchLayer() {
-  // ต้องสร้าง layer ใหม่ทุกครั้ง — clearLayers() + addData() ไม่เรียก pointToLayer ซ้ำ
-  if (switchLayer) map.removeLayer(switchLayer);
-
-  var visible = allSwitches.filter(f => {
-    var t = (f.properties.type || '').toLowerCase();
-    if (t === 'recloser' && !layerVis.reclosers)  return false;
-    if (t !== 'recloser' && !layerVis.switches)   return false;
+  var visible = allSwitches.filter(f=>{
+    var t = (f.properties.type||'').toLowerCase();
+    if(t==='recloser'   && !layerVis.reclosers)    return false;
+    if(t!=='recloser'   && !layerVis.switches)     return false;
     return true;
   });
 
   switchLayer = L.geoJSON(
-    { type: 'FeatureCollection', features: visible },
+    {type:'FeatureCollection',features:visible},
     {
       pointToLayer: makeSwitchMarker,
-      onEachFeature: function(f, layer) {
-        layer.on('click', function(e) {
+      onEachFeature: function(f,layer){
+        layer.on('click',function(e){
           L.DomEvent.stopPropagation(e);
-          showSwitchPopup(f, layer);
+          showSwitchPopup(f,layer);
         });
       }
     }
   ).addTo(map);
 }
 
-// ──────── TOP BAR ────────
-function updateTopBar(d) {
-  var epct = d.energized_pct || 0;
-  var el = document.getElementById('tb-energized');
-  el.textContent = epct + '%';
-  el.className = 'value ' + (epct >= 90 ? 'ok' : epct >= 70 ? 'warn' : 'error');
+// ══════════════════════════════════════════════════════════
+// LAYER TOGGLE
+// ══════════════════════════════════════════════════════════
+function toggleLayer(name){
+  layerVis[name] = !layerVis[name];
+  var el = document.getElementById('lyr-'+name);
+  el.classList.toggle('inactive', !layerVis[name]);
+  renderSwitchLayer();
+}
+
+// ══════════════════════════════════════════════════════════
+// FAULT MODE
+// ══════════════════════════════════════════════════════════
+function toggleFaultMode(){
+  faultMode = !faultMode;
+  document.body.classList.toggle('fault-mode', faultMode);
+  var btn = document.getElementById('place-fault-btn');
+  btn.textContent = faultMode ? '✕ Cancel fault' : '⊕ Place fault';
+  btn.className   = faultMode ? 'btn danger' : 'btn primary';
+  if(faultMode) showToast('คลิกบนแผนที่เพื่อวาง fault');
+}
+
+function clearFault(){
+  fetch('/clear_fault').then(()=>{
+    if(faultMarker){map.removeLayer(faultMarker);faultMarker=null;}
+    faultMode = false;
+    document.body.classList.remove('fault-mode');
+    document.getElementById('place-fault-btn').textContent = '⊕ Place fault';
+    document.getElementById('place-fault-btn').className = 'btn primary';
+    loadData(); showToast('Fault cleared');
+  });
+}
+
+map.on('click',function(e){
+  if(!faultMode) return;
+  fetch('/fault?lat='+e.latlng.lat+'&lon='+e.latlng.lng).then(r=>r.json()).then(d=>{
+    if(faultMarker) map.removeLayer(faultMarker);
+    faultMarker = L.marker([e.latlng.lat,e.latlng.lng],{
+      icon:L.divIcon({className:'',html:'<div class="fault-marker"></div>',iconSize:[18,18],iconAnchor:[9,9]}),
+      zIndexOffset:1000
+    }).addTo(map).bindPopup(`<b>⚠ Fault</b><br>Feeder: ${d.feeder}`).openPopup();
+    faultMode = false;
+    document.body.classList.remove('fault-mode');
+    document.getElementById('place-fault-btn').textContent='⊕ Place fault';
+    document.getElementById('place-fault-btn').className='btn primary';
+    loadData(); showToast('Fault: feeder '+d.feeder, true);
+  });
+});
+
+// ══════════════════════════════════════════════════════════
+// LOAD DATA
+// ══════════════════════════════════════════════════════════
+function loadData(){
+  fetch('/api/debug').then(r=>r.json()).then(dbg=>{
+    if(!dbg.build_ok){
+      showBuildError(dbg.build_error || 'build() ล้มเหลว — ดู console ของ server');
+      return;
+    }
+    hideBuildError();
+
+    // conductor
+    fetch('/api/conductor').then(r=>r.json()).then(d=>{
+      if(d.error){showBuildError(d.error);return;}
+      if(linesLayer) map.removeLayer(linesLayer);
+      linesLayer = L.geoJSON(d,{style:styleLines}).addTo(map);
+
+      // zoom to data ครั้งแรก
+      if(!didFitBounds && d.features && d.features.length > 0){
+        try{ map.fitBounds(linesLayer.getBounds(),{padding:[20,20]}); didFitBounds=true; }
+        catch(e){}
+      }
+    }).catch(e=>showBuildError(e.message));
+
+    // dof
+    fetch('/api/dof').then(r=>r.json()).then(d=>{
+      if(d.error){showBuildError(d.error);return;}
+      allSwitches = d.features||[];
+      renderSwitchLayer();
+      renderPanel();
+    }).catch(e=>showBuildError(e.message));
+
+    // scada
+    fetch('/api/scada').then(r=>r.json()).then(d=>{
+      if(d.error){showBuildError(d.error);return;}
+      scadaData = d;
+      updateTopBar(d);
+      if(currentTab==='feeders') renderFeeders(d);
+      if(currentTab==='status')  renderStatus(d);
+    }).catch(e=>showBuildError(e.message));
+
+  }).catch(e=>showBuildError('เชื่อมต่อ server ไม่ได้: '+e.message));
+}
+
+// ══════════════════════════════════════════════════════════
+// TOP BAR
+// ══════════════════════════════════════════════════════════
+function updateTopBar(d){
+  var pct = d.energized_pct||0;
+  var el  = document.getElementById('tb-energized');
+  el.textContent = pct+'%';
+  el.className   = 'value '+(pct>=90?'ok':pct>=70?'warn':'error');
 
   document.getElementById('tb-switches').textContent =
-    (d.open_switches || 0) + ' / ' + (d.total_switches || 0);
+    (d.open_switches||0)+' / '+(d.total_switches||0);
 
-  var faultEl = document.getElementById('tb-fault');
-  var fault = d.fault_feeder;
-  faultEl.textContent = fault || 'none';
-  faultEl.className = 'value ' + (fault ? 'error active-fault' : 'ok');
+  var fEl = document.getElementById('tb-fault');
+  fEl.textContent = d.fault_feeder||'none';
+  fEl.className   = 'value '+(d.fault_feeder?'error':'ok');
 }
 
-// ──────── TABS ────────
-function switchTab(name) {
+// ══════════════════════════════════════════════════════════
+// TABS
+// ══════════════════════════════════════════════════════════
+function switchTab(name){
   currentTab = name;
-  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === name));
-  document.getElementById('search-wrap').style.display = name === 'switches' ? '' : 'none';
+  document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('active',t.dataset.tab===name));
+  document.getElementById('search-wrap').style.display = name==='switches'?'':'none';
   renderPanel();
 }
-
-function renderPanel() {
-  if (currentTab === 'switches') renderSwitches();
-  if (currentTab === 'feeders')  renderFeeders(scadaData);
-  if (currentTab === 'status')   renderStatus(scadaData);
+function renderPanel(){
+  if(currentTab==='switches') renderSwitches();
+  if(currentTab==='feeders')  renderFeeders(scadaData);
+  if(currentTab==='status')   renderStatus(scadaData);
 }
 
-// ──────── SWITCHES LIST ────────
-function filterSwitches() { renderSwitches(); }
-
-function renderSwitches() {
-  var q = document.getElementById('search').value.toLowerCase();
-  var content = document.getElementById('panel-content');
-
-  var items = allSwitches.filter(f => {
-    var p = f.properties;
-    if (!q) return true;
-    return (p.id||'').toLowerCase().includes(q)
-        || (p.feeder||'').toLowerCase().includes(q)
-        || (p.location||'').toLowerCase().includes(q)
-        || (p.type||'').toLowerCase().includes(q);
+// ══════════════════════════════════════════════════════════
+// SWITCH LIST
+// ══════════════════════════════════════════════════════════
+function renderSwitches(){
+  var q    = document.getElementById('search').value.toLowerCase();
+  var cont = document.getElementById('panel-content');
+  var items = allSwitches.filter(f=>{
+    var p=f.properties;
+    return !q||(p.id||'').toLowerCase().includes(q)||(p.feeder||'').toLowerCase().includes(q)
+              ||(p.location||'').toLowerCase().includes(q)||(p.type||'').toLowerCase().includes(q);
   });
-
-  content.innerHTML = items.map(f => {
-    var p = f.properties;
-    var isOpen = p.status === 0;
-    return `
-      <div class="sw-row" onclick="flyToSwitch(${JSON.stringify(f.geometry.coordinates)}, '${p.id}')">
-        <div class="sw-dot ${isOpen ? 'open' : 'closed'}"></div>
-        <div class="sw-info">
-          <div class="sw-id">${p.id}</div>
-          <div class="sw-sub">${p.feeder||'UNK'} · ${p.type||'Disconnect'} · ${p.location||'-'}</div>
-        </div>
-        <div class="sw-toggle ${isOpen ? 'off' : 'on'}"></div>
+  cont.innerHTML = items.map(f=>{
+    var p=f.properties, isOpen=p.status===0;
+    return `<div class="sw-row" onclick="flyTo(${JSON.stringify(f.geometry.coordinates)},'${p.id}')">
+      <div class="sw-dot ${isOpen?'open':'closed'}"></div>
+      <div class="sw-info">
+        <div class="sw-id">${p.id}</div>
+        <div class="sw-sub">${p.feeder||'UNK'} · ${p.type||'Disconnect'} · ${p.location||'-'}</div>
       </div>
-    `;
+      <div class="sw-toggle ${isOpen?'off':'on'}"></div>
+    </div>`;
   }).join('');
 }
+function flyTo(coords,id){ map.flyTo([coords[1],coords[0]],16,{duration:0.8}); }
 
-function flyToSwitch(coords, id) {
-  map.flyTo([coords[1], coords[0]], 16, { duration: 0.8 });
+// ══════════════════════════════════════════════════════════
+// FEEDERS
+// ══════════════════════════════════════════════════════════
+function renderFeeders(d){
+  var cont = document.getElementById('panel-content');
+  var fds  = d.feeders||{};
+  if(!Object.keys(fds).length){cont.innerHTML='<div style="padding:20px;color:var(--muted);text-align:center">Loading…</div>';return;}
+  cont.innerHTML = Object.entries(fds).sort((a,b)=>b[1].pct-a[1].pct).map(([id,fd])=>`
+    <div class="feeder-row">
+      <div class="feeder-swatch" style="background:${fd.color}"></div>
+      <div class="feeder-name">${id}</div>
+      <div class="feeder-bar-wrap">
+        <div class="feeder-bar-bg"><div class="feeder-bar-fill" style="width:${fd.pct}%;background:${fd.color}"></div></div>
+        <div class="feeder-pct">${fd.pct}%</div>
+      </div>
+    </div>`).join('');
 }
 
-// ──────── FEEDERS ────────
-function renderFeeders(d) {
-  var content = document.getElementById('panel-content');
-  var feeders = d.feeders || {};
-
-  if (!Object.keys(feeders).length) {
-    content.innerHTML = '<div style="padding:20px;color:var(--muted);text-align:center">Loading feeders…</div>';
-    return;
-  }
-
-  content.innerHTML = Object.entries(feeders)
-    .sort((a,b) => b[1].pct - a[1].pct)
-    .map(([id, fd]) => `
-      <div class="feeder-row">
-        <div class="feeder-swatch" style="background:${fd.color}"></div>
-        <div class="feeder-name">${id}</div>
-        <div class="feeder-bar-wrap">
-          <div class="feeder-bar-bg">
-            <div class="feeder-bar-fill" style="width:${fd.pct}%;background:${fd.color}"></div>
-          </div>
-          <div class="feeder-pct">${fd.pct}%</div>
-        </div>
-      </div>
-    `).join('');
+// ══════════════════════════════════════════════════════════
+// STATUS
+// ══════════════════════════════════════════════════════════
+function renderStatus(d){
+  var cont = document.getElementById('panel-content');
+  if(!Object.keys(d).length){cont.innerHTML='<div style="padding:20px;color:var(--muted);text-align:center">Loading…</div>';return;}
+  var pct=d.energized_pct||0, pc=pct>=90?'green':pct>=70?'yellow':'red';
+  cont.innerHTML=`<div class="status-section">
+    <div class="status-kv"><span class="k">Energized nodes</span><span class="v accent">${d.nodes_on||0} / ${(d.nodes_on||0)+(d.nodes_off||0)}</span></div>
+    <div class="status-kv"><span class="k">Energized %</span><span class="v ${pc}">${pct}%</span></div>
+    <div class="status-kv"><span class="k">De-energized</span><span class="v red">${d.nodes_off||0}</span></div>
+    <div class="status-kv"><span class="k">Open switches</span><span class="v yellow">${d.open_switches||0}</span></div>
+    <div class="status-kv"><span class="k">Total switches</span><span class="v accent">${d.total_switches||0}</span></div>
+    <div class="status-kv"><span class="k">Fault feeder</span><span class="v ${d.fault_feeder?'red':'green'}">${d.fault_feeder||'none'}</span></div>
+  </div>`;
 }
 
-// ──────── STATUS ────────
-function renderStatus(d) {
-  var content = document.getElementById('panel-content');
-  if (!Object.keys(d).length) {
-    content.innerHTML = '<div style="padding:20px;color:var(--muted);text-align:center">Loading…</div>';
-    return;
-  }
-
-  var faultColor = d.fault_feeder ? 'red' : 'green';
-  var epct = d.energized_pct || 0;
-  var epctColor = epct >= 90 ? 'green' : epct >= 70 ? 'yellow' : 'red';
-
-  content.innerHTML = `
-    <div class="status-section">
-      <div class="status-kv">
-        <span class="k">Energized nodes</span>
-        <span class="v accent">${d.nodes_on || 0} / ${(d.nodes_on||0)+(d.nodes_off||0)}</span>
-      </div>
-      <div class="status-kv">
-        <span class="k">Energized %</span>
-        <span class="v ${epctColor}">${epct}%</span>
-      </div>
-      <div class="status-kv">
-        <span class="k">De-energized nodes</span>
-        <span class="v red">${d.nodes_off || 0}</span>
-      </div>
-      <div class="status-kv">
-        <span class="k">Open switches</span>
-        <span class="v yellow">${d.open_switches || 0}</span>
-      </div>
-      <div class="status-kv">
-        <span class="k">Total switches</span>
-        <span class="v accent">${d.total_switches || 0}</span>
-      </div>
-      <div class="status-kv">
-        <span class="k">Fault feeder</span>
-        <span class="v ${faultColor}">${d.fault_feeder || 'none'}</span>
-      </div>
-    </div>
-  `;
-}
-
-// ──────── TOAST ────────
-function showToast(msg, warn) {
-  var t = document.getElementById('toast');
-  t.textContent = (warn ? '⚠ ' : '✓ ') + msg;
-  t.style.borderColor = warn ? 'var(--red)' : 'var(--green)';
+// ══════════════════════════════════════════════════════════
+// TOAST / ERROR
+// ══════════════════════════════════════════════════════════
+function showToast(msg,warn){
+  var t=document.getElementById('toast');
+  t.textContent=(warn?'⚠ ':'✓ ')+msg;
+  t.style.borderColor=warn?'var(--red)':'var(--green)';
   t.classList.add('show');
-  setTimeout(() => t.classList.remove('show'), 2500);
+  setTimeout(()=>t.classList.remove('show'),2500);
 }
-
-
-// ──────── ERROR BANNER ────────
-function showBuildError(msg) {
-  var el = document.getElementById('build-error');
-  el.textContent = '⚠ ' + (msg || 'Server error');
+function showBuildError(msg){
+  var el=document.getElementById('build-error');
+  el.textContent='⚠ '+(msg||'Server error');
   el.classList.add('show');
 }
-function hideBuildError() {
+function hideBuildError(){
   document.getElementById('build-error').classList.remove('show');
 }
 
-// ──────── INIT ────────
+// ══════════════════════════════════════════════════════════
+// INIT
+// ══════════════════════════════════════════════════════════
 switchTab('switches');
 loadData();
 setInterval(loadData, 5000);
