@@ -7,7 +7,7 @@
 <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Thai:wght@300;400;500;600&display=swap" rel="stylesheet">
 <style>
-:root{
+:root
   --bg:#0b0f18; --surface:#111827; --surface2:#1a2235;
   --border:#1e2d45; --text:#e2e8f0; --muted:#64748b;
   --accent:#38bdf8; --green:#22c55e; --red:#ef4444; --yellow:#f59e0b;
@@ -205,27 +205,47 @@ body.fault-mode #map{cursor:crosshair!important;}
 // ══════════════════════════════════════════════════════════
 // MAP
 // ══════════════════════════════════════════════════════════
-var map = L.map('map',{zoomControl:true,attributionControl:false})
-           .setView([13.75,100.5],10);
+var map = L.map('map', {
+  zoomControl: true,
+  attributionControl: false,
+  renderer: L.canvas()
+}).setView([13.75, 100.5], 13);
 
 L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',{maxZoom:20}).addTo(map);
 
-var linesLayer  = null;
+var linesLayer = null;
 var switchLayer = null;
+
 var faultMarker = null;
 var faultMode   = false;
+
 var allSwitches = [];
 var currentTab  = 'switches';
 var scadaData   = {};
-var layerVis    = {switches:true, reclosers:true, transformers:true};
-var didFitBounds = false;   // zoom to data ครั้งแรก
+
+var layerVis = {
+  switches:true,
+  reclosers:true,
+  transformers:true
+};
+
+var didFitBounds = false;
+
+// กันโหลดซ้อน
+var loadingData = false;
 
 // ══════════════════════════════════════════════════════════
 // LINE STYLE
 // ══════════════════════════════════════════════════════════
-function styleLines(f){
-  var on = f.properties.status === "on";
-  return {color: on ? f.properties.color : "#2a3a52", weight: on ? 2.5 : 1.5, opacity: on ? 0.9 : 0.45};
+var on = f.properties.status === "on";
+
+  return {
+    color: on ? f.properties.color : "#233044",
+    weight: on ? 3.6 : 1.2,
+    opacity: on ? 1 : 0.22,
+    lineCap: 'round',
+    lineJoin: 'round'
+  };
 }
 
 // ══════════════════════════════════════════════════════════
@@ -246,13 +266,31 @@ function makeSwitchMarker(f, latlng){
     var rc = isOpen ? '#fb923c' : '#f59e0b';
     html = `<div style="width:0;height:0;border-left:7px solid transparent;border-right:7px solid transparent;border-bottom:13px solid ${rc};filter:drop-shadow(0 0 4px ${rc});"></div>`;
     sz=[14,13]; anc=[7,7];
-  } else if(t === 'load break'){
+  } 
+else if(t === 'load break'){
     html = `<div style="width:10px;height:10px;background:${sc};border:2px solid rgba(255,255,255,.4);box-shadow:0 0 6px ${sc};"></div>`;
     sz=[10,10]; anc=[5,5];
-  } else if(t === 'switch'){
+} 
+else if (t === 'transformer') {
+
+  html = `<div style="
+    width:12px;
+    height:12px;
+    background:#facc15;
+    border:2px solid rgba(255,255,255,.45);
+    border-radius:2px;
+    box-shadow:0 0 10px #facc15;
+  "></div>`;
+
+  sz=[12,12];
+  anc=[6,6];
+
+  } 
+else if(t === 'switch'){
     html = `<div style="width:9px;height:9px;background:${sc};border:2px solid rgba(255,255,255,.4);box-shadow:0 0 6px ${sc};transform:rotate(45deg);"></div>`;
     sz=[11,11]; anc=[5,5];
-  } else {
+  } 
+else {
     html = `<div style="width:8px;height:8px;border-radius:50%;background:${sc};border:2px solid rgba(255,255,255,.35);box-shadow:0 0 ${isOpen?8:5}px ${sc};"></div>`;
     sz=[8,8]; anc=[4,4];
   }
@@ -289,25 +327,42 @@ function toggleSwitch(id){
 // ══════════════════════════════════════════════════════════
 // RENDER SWITCH LAYER (สร้างใหม่ทุกครั้ง)
 // ══════════════════════════════════════════════════════════
-function renderSwitchLayer(){
-  if(switchLayer) map.removeLayer(switchLayer);
+function renderSwitchLayer() {
 
-  var visible = allSwitches.filter(f=>{
-    var t = (f.properties.type||'').toLowerCase();
-    if(t==='recloser'   && !layerVis.reclosers)    return false;
-    if(t!=='recloser'   && !layerVis.switches)     return false;
-    return true;
+  if (switchLayer) {
+    map.removeLayer(switchLayer);
+  }
+
+  var visible = allSwitches.filter(f => {
+
+    var t = (f.properties.type || '').toLowerCase();
+
+    if (t === 'recloser') {
+      return layerVis.reclosers;
+    }
+
+    if (t === 'transformer') {
+      return layerVis.transformers;
+    }
+
+    return layerVis.switches;
   });
 
   switchLayer = L.geoJSON(
-    {type:'FeatureCollection',features:visible},
+    {
+      type: 'FeatureCollection',
+      features: visible
+    },
     {
       pointToLayer: makeSwitchMarker,
-      onEachFeature: function(f,layer){
-        layer.on('click',function(e){
+
+      onEachFeature: function(f, layer) {
+
+        layer.on('click', function(e) {
           L.DomEvent.stopPropagation(e);
-          showSwitchPopup(f,layer);
+          showSwitchPopup(f, layer);
         });
+
       }
     }
   ).addTo(map);
@@ -375,8 +430,14 @@ function fetchAll(){
   }).then(d=>{
     if(d.error){showBuildError(d.error);return;}
     hideBuildError();
-    if(linesLayer) map.removeLayer(linesLayer);
-    linesLayer = L.geoJSON(d,{style:styleLines}).addTo(map);
+    if (linesLayer) {
+  map.removeLayer(linesLayer);
+}
+
+linesLayer = L.geoJSON(d, {
+  renderer: L.canvas(),
+  style: styleLines
+}).addTo(map);
     if(!didFitBounds && d.features && d.features.length>0){
       try{map.fitBounds(linesLayer.getBounds(),{padding:[20,20]});didFitBounds=true;}catch(e){}
     }
