@@ -312,7 +312,17 @@ def api_conductor():
 
             for line in extract_lines(geom):
                 coords = [[c[0], c[1]] for c in line.coords]
-                status = "on" if all(tuple(c) in energized for c in coords) else "off"
+                edge_on = False
+                
+for i in range(len(coords)-1):
+    a = (coords[i][0], coords[i][1])
+    b = (coords[i+1][0], coords[i+1][1])
+
+    if a in energized or b in energized:
+        edge_on = True
+        break
+
+status = "on" if edge_on else "off"
                 features.append({
                     "type": "Feature",
                     "geometry": {"type": "LineString", "coordinates": coords},
