@@ -213,7 +213,7 @@ var map = L.map('map', {
 
 L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',{maxZoom:20}).addTo(map);
 
-var linesLayer = null;
+var linesLayer = L.geoJSON(null).addTo(map);
 var switchLayer = null;
 
 var faultMarker = null;
