@@ -1,257 +1,155 @@
-<!DOCTYPE html>
-<html lang="th">
-<head>
-<meta charset="utf-8">
-<title>PEA SPARK - SYSTEM MONITORING</title>
-<link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
-<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans+Thai:wght@300;400;600&display=swap" rel="stylesheet">
+from flask import Flask, jsonify, render_template, request
+import json, os, traceback
+import networkx as nx
+from scipy.spatial import KDTree
+import geopandas as gpd
 
-<style>
-:root {
-  --bg:        #0b0f18;
-  --surface:   #111827;
-  --surface2:  #1a2235;
-  --border:    #1e2d45;
-  --text:      #e2e8f0;
-  --muted:     #64748b;
-  --accent:    #38bdf8;
-  --green:     #22c55e;
-  --red:       #ef4444;
-  --yellow:    #f59e0b;
-  --panel-w:   320px;
-  --topbar-h:  70px;
-}
+app = Flask(__name__)
 
-* { box-sizing: border-box; margin: 0; padding: 0; }
-body { background: var(--bg); color: var(--text); font-family: 'IBM Plex Sans Thai', sans-serif; overflow: hidden; height: 100vh; }
+G = None
+NODE_LIST = []
+TREE = None
+SWITCH_NODES = {}
+SWITCH_STATUS = {}
+FEEDER_COLOR = {}
+FAULT_NODE = None
+FAULT_FEEDER = None
 
-/* ──────── TOP BAR ──────── */
-#topbar {
-  position: fixed; top: 0; left: 0; right: 0; height: var(--topbar-h);
-  background: var(--surface); border-bottom: 1px solid var(--border);
-  display: flex; align-items: center; padding: 0 20px; z-index: 1000;
-}
+# พาเลทสีมาตรฐาน (จะวนซ้ำถ้าฟีดเดอร์เยอะกว่านี้)
+COLOR_PALETTE = [
+    "#00e5ff", "#7c4dff", "#ff9100", "#00e676", "#ff5252", "#ffd600",
+    "#fb8c00", "#d81b60", "#8e24aa", "#5e35b1", "#1e88e5", "#039be5",
+    "#00acc1", "#00897b", "#43a047", "#7cb342", "#c0ca33", "#fdd835"
+]
 
-#brand { display: flex; align-items: center; gap: 15px; min-width: 300px; border-right: 1px solid var(--border); padding-right: 25px; }
+def load_data(path):
+    if not os.path.exists(path): return None
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)
 
-/* ขยายขนาดโลโก้มุมซ้ายบน */
-#brand img {
-  height: 55px; /* ปรับขนาดให้ใหญ่ขึ้นตามต้องการ */
-  width: auto;
-  object-fit: contain;
-}
+def build():
+    global G, NODE_LIST, TREE, FEEDER_COLOR, SWITCH_NODES
+    try:
+        G = nx.Graph()
+        nodes = []
+        path = "data/psconductor.json" if os.path.exists("data/psconductor.json") else "data/psconductor.geojson"
+        data = load_data(path)
+        if not data: return
 
-.title-group .main { font-weight: 600; font-size: 18px; color: var(--accent); line-height: 1.2; }
-.title-group .sub  { font-size: 11px; color: var(--muted); font-family: 'IBM Plex Mono', monospace; }
+        # 1. จัดการสีฟีดเดอร์ตามจำนวน FEEDERID จริง
+        unique_feeders = sorted(list(set(str(f["properties"].get("FEEDERID", "UNK")).strip() for f in data["features"])))
+        FEEDER_COLOR = {fid: COLOR_PALETTE[i % len(COLOR_PALETTE)] for i, fid in enumerate(unique_feeders)}
 
-.stat-pill { display: flex; align-items: center; gap: 12px; padding: 0 20px; border-right: 1px solid var(--border); height: 100%; }
-.stat-pill .label { font-size: 10px; color: var(--muted); text-transform: uppercase; }
-.stat-pill .value { font-family: 'IBM Plex Mono', monospace; font-size: 18px; font-weight: 600; }
+        # 2. สร้าง Graph
+        for f in data["features"]:
+            geom = f["geometry"]
+            feeder = str(f["properties"].get("FEEDERID", "UNK")).strip()
+            if geom["type"] == "LineString":
+                coords = geom["coordinates"]
+                for i in range(len(coords)-1):
+                    a, b = tuple(coords[i][:2]), tuple(coords[i+1][:2])
+                    G.add_edge(a, b, feeder=feeder)
+                    nodes += [a, b]
 
-#topbar-actions { margin-left: auto; display: flex; gap: 10px; }
-.btn { padding: 8px 16px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); cursor: pointer; font-weight: 500; font-size: 13px; }
-.btn.primary { border-color: var(--accent); color: var(--accent); }
+        NODE_LIST = list(set(nodes))
+        TREE = KDTree(NODE_LIST)
 
-/* ──────── MAP & SIDEBAR ──────── */
-#map { position: fixed; top: var(--topbar-h); left: 0; right: var(--panel-w); bottom: 0; z-index: 1; background: #0d1117; }
+        # 3. จัดการอุปกรณ์ Switch
+        d_path = "data/DOF.json" if os.path.exists("data/DOF.json") else "data/DOF.geojson"
+        d_data = load_data(d_path)
+        if d_data:
+            for f in d_data["features"]:
+                fid = str(f["properties"].get("FACILITYID", f["properties"].get("DEVICEID", "")))
+                if not fid: continue
+                coord = tuple(f["geometry"]["coordinates"][:2])
+                dist, idx = TREE.query(coord)
+                SWITCH_NODES[fid] = NODE_LIST[idx]
+                if fid not in SWITCH_STATUS: SWITCH_STATUS[fid] = 1
+        print(f"Build Success: {len(unique_feeders)} Feeders mapped.")
+    except:
+        print(traceback.format_exc())
 
-#panel { position: fixed; top: var(--topbar-h); right: 0; width: var(--panel-w); bottom: 0; background: var(--surface); border-left: 1px solid var(--border); z-index: 900; display: flex; flex-direction: column; }
+# รัน build ทันที
+build()
 
-.tabs { display: flex; border-bottom: 1px solid var(--border); }
-.tab { flex: 1; text-align: center; padding: 15px 0; cursor: pointer; color: var(--muted); border-bottom: 2px solid transparent; transition: 0.2s; }
-.tab.active { color: var(--accent); border-bottom-color: var(--accent); background: rgba(56,189,248,0.05); }
+def get_active_nodes():
+    active = set()
+    sources = [NODE_LIST[0]] if NODE_LIST else [] 
+    stack = list(sources)
+    while stack:
+        n = stack.pop()
+        if n in active: continue
+        active.add(n)
+        for nbr in G.neighbors(n):
+            if nbr == FAULT_NODE: continue
+            blocked = False
+            for fid, snode in SWITCH_NODES.items():
+                if snode == nbr and SWITCH_STATUS.get(fid) == 0:
+                    blocked = True; break
+            if not blocked: stack.append(nbr)
+    return active
 
-#search-wrap { padding: 15px; border-bottom: 1px solid var(--border); }
-#search-input { width: 100%; padding: 10px; background: var(--surface2); border: 1px solid var(--border); border-radius: 4px; color: var(--text); outline: none; }
+@app.route("/")
+def index(): return render_template("indexpro.html")
 
-#panel-content { flex: 1; overflow-y: auto; padding: 10px; }
+@app.route("/api/conductor")
+def api_conductor():
+    active = get_active_nodes()
+    path = "data/psconductor.json" if os.path.exists("data/psconductor.json") else "data/psconductor.geojson"
+    data = load_data(path)
+    feats = []
+    for f in data["features"]:
+        feeder = str(f["properties"].get("FEEDERID", "UNK")).strip()
+        is_on = any(tuple(c[:2]) in active for c in f["geometry"]["coordinates"])
+        f["properties"]["status"] = "on" if is_on else "off"
+        f["properties"]["color"] = FEEDER_COLOR.get(feeder, "#334155")
+        feats.append(f)
+    return jsonify({"type":"FeatureCollection","features":feats})
 
-/* Switch Item Card */
-.sw-card { background: var(--surface2); border: 1px solid var(--border); border-radius: 6px; padding: 12px; margin-bottom: 8px; display: flex; align-items: center; gap: 12px; cursor: pointer; transition: 0.2s; }
-.sw-card:hover { border-color: var(--accent); }
-.sw-status-dot { width: 8px; height: 8px; border-radius: 50%; }
-.sw-id { font-family: 'IBM Plex Mono'; font-weight: 600; font-size: 14px; }
+@app.route("/api/dof")
+def api_dof():
+    path = "data/DOF.json" if os.path.exists("data/DOF.json") else "data/DOF.geojson"
+    data = load_data(path)
+    feats = []
+    for f in data["features"]:
+        fid = str(f["properties"].get("FACILITYID", f["properties"].get("DEVICEID", "")))
+        pos = SWITCH_STATUS.get(fid, 1)
+        f["properties"]["status"] = pos
+        f["properties"]["id"] = fid
+        feats.append(f)
+    return jsonify({"type":"FeatureCollection","features":feats})
 
-/* ──────── LEGEND ──────── */
-#legend { position: fixed; bottom: 20px; left: 20px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 12px; z-index: 800; }
-.legend-item { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; font-size: 12px; }
-.dot { width: 10px; height: 10px; border-radius: 50%; }
+@app.route("/api/scada")
+def scada():
+    active = get_active_nodes()
+    return jsonify({
+        "energized_pct": round(len(active)/len(NODE_LIST)*100, 1) if NODE_LIST else 0,
+        "open_switches": list(SWITCH_STATUS.values()).count(0),
+        "total_switches": len(SWITCH_STATUS),
+        "fault_feeder": FAULT_FEEDER or "none"
+    })
 
-#toast { position: fixed; bottom: 80px; left: 50%; transform: translateX(-50%); background: var(--surface); border: 1px solid var(--accent); padding: 10px 25px; border-radius: 50px; display: none; z-index: 2000; }
-</style>
-</head>
-<body>
+@app.route("/toggle_switch")
+def toggle():
+    fid = request.args.get("id")
+    if fid in SWITCH_STATUS: SWITCH_STATUS[fid] = 1 - SWITCH_STATUS[fid]
+    return jsonify({"ok": True})
 
-<div id="topbar">
-  <div id="brand">
-    <img src="/static/logo.png" alt="PEA LOGO">
-    <div class="title-group">
-      <div class="main">PEA SPARK</div>
-      <div class="sub">LIVE NETWORK MONITORING</div>
-    </div>
-  </div>
+@app.route("/fault")
+def set_fault():
+    global FAULT_NODE, FAULT_FEEDER
+    lat, lon = float(request.args.get("lat")), float(request.args.get("lon"))
+    dist, idx = TREE.query((lon, lat))
+    FAULT_NODE = NODE_LIST[idx]
+    for nbr in G.neighbors(FAULT_NODE):
+        FAULT_FEEDER = G[FAULT_NODE][nbr].get("feeder", "UNK"); break
+    return jsonify({"ok": True, "feeder": FAULT_FEEDER})
 
-  <div class="stat-pill">
-    <div>
-      <div class="label">Energized</div>
-      <div class="value" id="val-energized" style="color: var(--green);">--%</div>
-    </div>
-  </div>
+@app.route("/clear_fault")
+def clear():
+    global FAULT_NODE, FAULT_FEEDER
+    FAULT_NODE, FAULT_FEEDER = None, None
+    return jsonify({"ok": True})
 
-  <div class="stat-pill">
-    <div>
-      <div class="label">Fault Feeder</div>
-      <div class="value" id="val-fault" style="color: var(--red);">none</div>
-    </div>
-  </div>
-
-  <div id="topbar-actions">
-    <button class="btn" onclick="loadData()">🔄 Refresh</button>
-    <button class="btn primary" onclick="toggleFaultMode()">⊕ Place Fault</button>
-    <button class="btn" style="color: var(--red); border-color: var(--red);" onclick="clearFault()">✕ Clear</button>
-  </div>
-</div>
-
-<div id="map"></div>
-
-<div id="panel">
-  <div class="tabs">
-    <div class="tab active" onclick="switchTab('switches')">Switches</div>
-    <div class="tab" onclick="switchTab('status')">System Status</div>
-  </div>
-  <div id="search-wrap">
-    <input type="text" id="search-input" placeholder="ค้นหาอุปกรณ์..." onkeyup="filterList()">
-  </div>
-  <div id="panel-content"></div>
-</div>
-
-<div id="legend">
-  <div style="font-size: 10px; color: var(--muted); margin-bottom: 8px;">LEGEND</div>
-  <div class="legend-item"><div class="dot" style="background: var(--accent);"></div> Conductors</div>
-  <div class="legend-item"><div class="dot" style="background: var(--green);"></div> Closed Switch</div>
-  <div class="legend-item"><div class="dot" style="background: var(--red);"></div> Open Switch</div>
-</div>
-
-<div id="toast"></div>
-
-<script>
-var map = L.map('map', { zoomControl: false }).setView([13.75, 100.5], 13);
-L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png').addTo(map);
-
-var lineLayer = L.geoJSON(null, {
-  style: function(f) {
-    var on = f.properties.status === 'on';
-    return { 
-      color: on ? f.properties.color : '#2a3a52', 
-      weight: on ? 2.5 : 1.5, 
-      opacity: on ? 0.9 : 0.5 
-    };
-  }
-}).addTo(map);
-
-var switchLayer = L.layerGroup().addTo(map);
-var firstLoad = true;
-var currentTab = 'switches';
-var faultMode = false;
-var allDevices = [];
-
-async function loadData() {
-  try {
-    const [resL, resD, resS] = await Promise.all([
-      fetch('/api/conductor'),
-      fetch('/api/dof'),
-      fetch('/api/scada')
-    ]);
-
-    const lines = await resL.json();
-    const devices = await resD.json();
-    const scada = await resS.json();
-    allDevices = devices.features;
-
-    // วาดเส้น
-    lineLayer.clearLayers().addData(lines);
-    if (firstLoad && lines.features.length > 0) {
-      map.fitBounds(lineLayer.getBounds());
-      firstLoad = false;
-    }
-
-    // วาดอุปกรณ์
-    switchLayer.clearLayers();
-    L.geoJSON(devices, {
-      pointToLayer: (f, ll) => L.circleMarker(ll, {
-        radius: 7, fillColor: f.properties.status === 1 ? 'var(--green)' : 'var(--red)',
-        color: '#fff', weight: 2, fillOpacity: 1
-      }),
-      onEachFeature: (f, l) => {
-        l.bindPopup(`<b>ID: ${f.properties.id}</b><br>สถานะ: ${f.properties.status==1?'Closed':'Open'}<br><button onclick="toggleSwitch('${f.properties.id}')" style="margin-top:8px; width:100%; cursor:pointer;">Toggle</button>`);
-      }
-    }).addTo(switchLayer);
-
-    // อัปเดต Stats
-    document.getElementById('val-energized').textContent = scada.energized_pct + '%';
-    document.getElementById('val-fault').textContent = scada.fault_feeder;
-    
-    renderList();
-  } catch (e) { console.error(e); }
-}
-
-function renderList() {
-  const content = document.getElementById('panel-content');
-  if (currentTab === 'switches') {
-    content.innerHTML = allDevices.map(f => `
-      <div class="sw-card" onclick="map.setView([${f.geometry.coordinates[1]}, ${f.geometry.coordinates[0]}], 18)">
-        <div class="sw-status-dot" style="background: ${f.properties.status==1?'var(--green)':'var(--red)'}"></div>
-        <div class="sw-id">${f.properties.id}</div>
-        <div style="margin-left: auto; font-size: 11px; color: var(--muted);">${f.properties.status==1?'CLOSED':'OPEN'}</div>
-      </div>
-    `).join('');
-  } else {
-    content.innerHTML = `<div style="padding: 20px; color: var(--muted); font-size: 13px;">กำลังคำนวณสถิติระบบ...</div>`;
-  }
-}
-
-async function toggleSwitch(id) {
-  await fetch(`/toggle_switch?id=${id}`);
-  loadData();
-}
-
-function toggleFaultMode() {
-  faultMode = !faultMode;
-  document.body.style.cursor = faultMode ? 'crosshair' : 'default';
-  showToast(faultMode ? "คลิกบนแผนที่เพื่อวาง Fault" : "ยกเลิกโหมด Fault");
-}
-
-map.on('click', async function(e) {
-  if (!faultMode) return;
-  const res = await fetch(`/fault?lat=${e.latlng.lat}&lon=${e.latlng.lng}`);
-  const d = await res.json();
-  showToast("Fault detected: " + d.feeder);
-  faultMode = false;
-  document.body.style.cursor = 'default';
-  loadData();
-});
-
-async function clearFault() {
-  await fetch('/clear_fault');
-  loadData();
-}
-
-function showToast(m) {
-  const t = document.getElementById('toast');
-  t.textContent = m; t.style.display = 'block';
-  setTimeout(() => t.style.display = 'none', 3000);
-}
-
-function switchTab(t) {
-  currentTab = t;
-  document.querySelectorAll('.tab').forEach(el => el.classList.toggle('active', el.textContent.toLowerCase().includes(t)));
-  renderList();
-}
-
-loadData();
-setInterval(loadData, 10000);
-</script>
-</body>
-</html>
+if __name__ == "__main__":
+    app.run(debug=True, port=5000)
