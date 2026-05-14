@@ -2,7 +2,7 @@
 <html lang="th">
 <head>
 <meta charset="utf-8">
-<title>PEA SPARK</title>
+<title>SCADA · Distribution Grid</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
 <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Thai:wght@300;400;500;600&display=swap" rel="stylesheet">
@@ -32,7 +32,7 @@ body{background:var(--bg);color:var(--text);font-family:'IBM Plex Sans Thai',san
   height:100%;min-width:260px;flex-shrink:0;
 }
 #brand-logo{height:65px;width:auto;object-fit:contain;display:block;flex-shrink:0;}
-#brand-text .title{font-weight:600;font-size:14px;letter-spacing:.3px;}
+#brand-text .title{font-weight:600;font-size:13px;letter-spacing:.3px;}
 #brand-text .sub{font-size:10px;color:var(--muted);font-family:'IBM Plex Mono',monospace;white-space:nowrap;margin-top:1px;}
 
 /* stat pills */
@@ -254,7 +254,7 @@ body.fault-mode #map{cursor:crosshair!important;}
          onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
     <div id="brand-fallback" style="display:none;width:36px;height:36px;border-radius:8px;background:linear-gradient(135deg,#0ea5e9,#38bdf8);align-items:center;justify-content:center;font-size:18px;box-shadow:0 0 12px rgba(56,189,248,.4);flex-shrink:0;">⚡</div>
     <div id="brand-text">
-      <div class="title">PEA SPARK</div>
+      <div class="title">SCADA · Distribution Grid</div>
       <div class="sub">Provincial Electricity Authority · Live network model</div>
     </div>
   </div>
@@ -391,41 +391,64 @@ function styleLines(f){
 }
 
 // ══════════════════════════════════════════════════════════
-// SWITCH MARKERS
-//   Disconnect  → ⬤ วงกลม
-//   Load Break  → ■ สี่เหลี่ยม
-//   Switch(TVS) → ◆ ข้าวหลามตัด
-//   Recloser    → ▲ สามเหลี่ยม (ส้ม)
-//   Transformer → ■ สี่เหลี่ยมเหลือง
+// SWITCH MARKERS  (ใช้ CircleMarker + DivIcon ผสมกัน)
+//   Disconnect  → ⬤ วงกลม  เขียว/แดง
+//   Load Break  → ■ divIcon สี่เหลี่ยม
+//   Switch(TVS) → ◆ divIcon ข้าวหลามตัด
+//   Recloser    → ▲ divIcon สามเหลี่ยม ส้ม
+//   Transformer → ■ วงกลมเหลือง
 // ══════════════════════════════════════════════════════════
 function makeSwitchMarker(f, latlng){
   var p      = f.properties;
   var isOpen = p.status === 0;
   var t      = (p.type||'disconnect').toLowerCase();
   var sc     = isOpen ? '#ef4444' : '#22c55e';
-  var html, sz, anc;
 
   if(t === 'recloser'){
     var rc = isOpen ? '#fb923c' : '#f59e0b';
-    html = `<div style="width:0;height:0;border-left:7px solid transparent;border-right:7px solid transparent;border-bottom:13px solid ${rc};filter:drop-shadow(0 0 4px ${rc});"></div>`;
-    sz=[14,13]; anc=[7,13];
-  } else if(t === 'load break'){
-    html = `<div style="width:10px;height:10px;background:${sc};border:1.5px solid rgba(255,255,255,.35);box-shadow:0 0 6px ${sc};"></div>`;
-    sz=[10,10]; anc=[5,5];
-  } else if(t === 'transformer'){
-    html = `<div style="width:12px;height:12px;background:#facc15;border:1.5px solid rgba(255,255,255,.4);border-radius:2px;box-shadow:0 0 8px #facc15;"></div>`;
-    sz=[12,12]; anc=[6,6];
-  } else if(t === 'switch'){
-    html = `<div style="width:9px;height:9px;background:${sc};border:1.5px solid rgba(255,255,255,.35);box-shadow:0 0 6px ${sc};transform:rotate(45deg);"></div>`;
-    sz=[11,11]; anc=[5,5];
-  } else {
-    // Disconnect (default)
-    html = `<div style="width:8px;height:8px;border-radius:50%;background:${sc};border:1.5px solid rgba(255,255,255,.3);box-shadow:0 0 ${isOpen?8:5}px ${sc};"></div>`;
-    sz=[8,8]; anc=[4,4];
+    return L.marker(latlng,{
+      icon: L.divIcon({
+        className:'',
+        html:'<div style="width:0;height:0;border-left:7px solid transparent;border-right:7px solid transparent;border-bottom:13px solid '+rc+';"></div>',
+        iconSize:[14,13], iconAnchor:[7,13]
+      }),
+      zIndexOffset:100
+    });
   }
-  return L.marker(latlng,{
-    icon:L.divIcon({className:'',html,iconSize:sz,iconAnchor:anc}),
-    zIndexOffset: t==='recloser'?100:0
+
+  if(t === 'transformer'){
+    return L.circleMarker(latlng,{
+      radius:5, color:'#facc15', fillColor:'#facc15',
+      fillOpacity:1, weight:1.5, opacity:0.9
+    });
+  }
+
+  if(t === 'load break'){
+    return L.marker(latlng,{
+      icon: L.divIcon({
+        className:'',
+        html:'<div style="width:10px;height:10px;background:'+sc+';border:1.5px solid rgba(255,255,255,.4);box-shadow:0 0 5px '+sc+';"></div>',
+        iconSize:[10,10], iconAnchor:[5,5]
+      })
+    });
+  }
+
+  if(t === 'switch'){
+    return L.marker(latlng,{
+      icon: L.divIcon({
+        className:'',
+        html:'<div style="width:9px;height:9px;background:'+sc+';border:1.5px solid rgba(255,255,255,.35);transform:rotate(45deg);"></div>',
+        iconSize:[11,11], iconAnchor:[5,5]
+      })
+    });
+  }
+
+  // Disconnect default → circleMarker (most reliable)
+  return L.circleMarker(latlng,{
+    radius:5,
+    color: isOpen ? '#ef4444' : '#22c55e',
+    fillColor: isOpen ? '#ef4444' : '#22c55e',
+    fillOpacity:1, weight:2, opacity:0.9
   });
 }
 
@@ -456,19 +479,30 @@ function toggleSwitch(id){
 // RENDER SWITCH LAYER
 // ══════════════════════════════════════════════════════════
 function renderSwitchLayer(){
-  if(switchLayer) map.removeLayer(switchLayer);
+  if(switchLayer){ map.removeLayer(switchLayer); switchLayer=null; }
   var visible = allSwitches.filter(f=>{
     var t = (f.properties.type||'').toLowerCase();
     if(t==='recloser')    return layerVis.reclosers;
     if(t==='transformer') return layerVis.transformers;
     return layerVis.switches;
   });
-  switchLayer = L.geoJSON({type:'FeatureCollection',features:visible},{
-    pointToLayer: makeSwitchMarker,
-    onEachFeature: function(f,layer){
-      layer.on('click',function(e){ L.DomEvent.stopPropagation(e); showSwitchPopup(f,layer); });
-    }
-  }).addTo(map);
+  console.log('[SWITCH] rendering', visible.length, 'markers');
+  if(!visible.length) return;
+  try{
+    switchLayer = L.geoJSON({type:'FeatureCollection',features:visible},{
+      pointToLayer: function(f,latlng){
+        try{ return makeSwitchMarker(f,latlng); }
+        catch(e){
+          console.warn('[SWITCH] marker error',e,f.properties);
+          return L.circleMarker(latlng,{radius:5,color:'#22c55e',fillOpacity:1});
+        }
+      },
+      onEachFeature: function(f,layer){
+        layer.on('click',function(e){ L.DomEvent.stopPropagation(e); showSwitchPopup(f,layer); });
+      }
+    }).addTo(map);
+    console.log('[SWITCH] layer added ok, bounds:', switchLayer.getBounds());
+  }catch(e){ console.error('[SWITCH] geoJSON error:',e); }
 }
 
 // ══════════════════════════════════════════════════════════
@@ -700,9 +734,11 @@ function fetchAll(){
   }).then(d=>{
     if(d.error){showBuildError(d.error);return;}
     allSwitches=d.features||[];
+    console.log('[DOF] features loaded:', allSwitches.length,
+      allSwitches.length>0 ? allSwitches[0] : 'empty');
     renderSwitchLayer();
     renderPanel();
-  }).catch(e=>showBuildError(e.message));
+  }).catch(e=>{console.error('[DOF] error:',e);showBuildError(e.message);});
 
   fetch('/api/scada').then(r=>{
     if(!r.ok) throw new Error('scada '+r.status);
