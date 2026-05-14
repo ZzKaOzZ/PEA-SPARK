@@ -1,790 +1,845 @@
 <!DOCTYPE html>
 <html lang="th">
 <head>
-<meta charset="utf-8">
-<title>SCADA · Distribution Grid</title>
-<link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
-<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Thai:wght@300;400;500;600&display=swap" rel="stylesheet">
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>SCADA · Distribution Grid · PEA Prachuap</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <style>
-:root{
-  --bg:#0b0f18; --surface:#111827; --surface2:#1a2235; --surface3:#0f1829;
-  --border:#1e2d45; --border2:#243352;
-  --text:#e2e8f0; --muted:#64748b; --muted2:#4a5568;
-  --accent:#38bdf8; --accent2:#0ea5e9;
-  --green:#22c55e; --green2:#16a34a;
-  --red:#ef4444; --red2:#dc2626;
-  --yellow:#f59e0b; --orange:#fb923c;
-  --panel-w:320px; --topbar-h:72px;
-}
-*{box-sizing:border-box;margin:0;padding:0;}
-body{background:var(--bg);color:var(--text);font-family:'IBM Plex Sans Thai',sans-serif;font-size:13px;overflow:hidden;height:100vh;}
+/* ─── Reset / Base ─────────────────────────────────────── */
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;font-family:'Segoe UI',system-ui,sans-serif;background:#0d1117;color:#e6edf3;font-size:13px}
 
-/* ── TOPBAR ── */
-#topbar{
-  position:fixed;top:0;left:0;right:0;height:var(--topbar-h);
-  background:var(--surface);border-bottom:1px solid var(--border);
-  display:flex;align-items:center;z-index:1000;padding:0;gap:0;overflow:visible;
-}
-#brand{
-  display:flex;align-items:center;gap:10px;
-  padding:0 16px;border-right:1px solid var(--border);
-  height:100%;min-width:260px;flex-shrink:0;
-}
-#brand-logo{height:65px;width:auto;object-fit:contain;display:block;flex-shrink:0;}
-#brand-text .title{font-weight:600;font-size:13px;letter-spacing:.3px;}
-#brand-text .sub{font-size:10px;color:var(--muted);font-family:'IBM Plex Mono',monospace;white-space:nowrap;margin-top:1px;}
+/* ─── Layout ────────────────────────────────────────────── */
+#app   {display:flex;flex-direction:column;height:100vh}
+#main  {display:flex;flex:1;overflow:hidden}
+#map-wrap{position:relative;flex:1}
+#map   {width:100%;height:100%}
+#sidebar{width:370px;background:#161b22;border-left:1px solid #30363d;
+         display:flex;flex-direction:column;overflow:hidden;flex-shrink:0}
 
-/* stat pills */
-.stat-pill{
-  display:flex;align-items:center;gap:10px;
-  padding:0 20px;border-right:1px solid var(--border);height:100%;
-  flex-shrink:0;
-}
-.stat-pill .pill-icon{
-  width:28px;height:28px;border-radius:6px;
-  display:flex;align-items:center;justify-content:center;
-  font-size:13px;flex-shrink:0;
-}
-.pill-icon.energized{background:rgba(34,197,94,.12);color:var(--green);}
-.pill-icon.switches {background:rgba(56,189,248,.12);color:var(--accent);}
-.pill-icon.fault    {background:rgba(239,68,68,.12);color:var(--red);}
-.stat-pill .label{font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.9px;line-height:1;}
-.stat-pill .value{font-family:'IBM Plex Mono',monospace;font-size:18px;font-weight:600;line-height:1.1;margin-top:1px;}
-.stat-pill .value.ok   {color:var(--green);}
-.stat-pill .value.warn {color:var(--yellow);}
-.stat-pill .value.error{color:var(--red);}
-.stat-pill .value.info {color:var(--accent);}
+/* ─── Header ────────────────────────────────────────────── */
+header{background:#161b22;border-bottom:1px solid #30363d;padding:8px 14px;
+       display:flex;align-items:center;justify-content:space-between;gap:10px;
+       flex-wrap:wrap;z-index:1100}
+.brand{display:flex;align-items:center;gap:9px}
+.brand-icon{width:34px;height:34px;border-radius:8px;background:rgba(0,229,255,.1);
+            border:1px solid rgba(0,229,255,.3);display:flex;align-items:center;
+            justify-content:center;font-size:17px}
+.brand-title{font-size:13px;font-weight:600;letter-spacing:.03em}
+.brand-sub{font-size:10px;color:#768390;font-family:monospace}
+.stats{display:flex;gap:7px;flex-wrap:wrap}
+.stat{display:flex;align-items:center;gap:7px;padding:5px 10px;
+      background:rgba(255,255,255,.04);border:1px solid #30363d;border-radius:6px}
+.stat-icon{color:#768390;font-size:12px}
+.stat-label{font-size:9px;text-transform:uppercase;letter-spacing:.06em;color:#768390}
+.stat-value{font-size:13px;font-family:monospace}
+.good{color:#3fb950}.warn{color:#d29922}.bad{color:#f85149}.mute{color:#768390}
 
-#topbar-actions{margin-left:auto;display:flex;align-items:center;gap:8px;padding-right:16px;}
-.btn{
-  display:inline-flex;align-items:center;gap:6px;
-  padding:7px 14px;border-radius:6px;border:1px solid var(--border);
-  background:var(--surface2);color:var(--text);
-  font-size:12px;font-family:'IBM Plex Sans Thai',sans-serif;
-  cursor:pointer;transition:all .15s;white-space:nowrap;
-}
-.btn:hover{background:var(--border);}
-.btn.icon-only{padding:7px 10px;}
-.btn.primary{background:rgba(56,189,248,.12);border-color:rgba(56,189,248,.4);color:var(--accent);}
-.btn.primary:hover{background:rgba(56,189,248,.22);}
-.btn.danger{background:rgba(239,68,68,.10);border-color:rgba(239,68,68,.4);color:var(--red);}
-.btn.danger:hover{background:rgba(239,68,68,.20);}
-.btn svg{flex-shrink:0;}
+.btns{display:flex;gap:6px;align-items:center}
+button{cursor:pointer;font-family:inherit;font-size:12px;border-radius:5px;
+       padding:5px 12px;border:1px solid #30363d;transition:.15s;white-space:nowrap}
+.btn-ghost{background:transparent;color:#c9d1d9}
+.btn-ghost:hover{background:#30363d}
+.btn-out{background:transparent;color:#c9d1d9}
+.btn-out:hover{background:#30363d}
+.btn-danger{background:#da3633;color:#fff;border-color:#da3633}
+.btn-danger:hover{background:#b91c1c}
+.btn-success{background:#238636;color:#fff;border-color:#238636}
+.btn-success:hover{background:#166534}
+.btn-plan{background:rgba(139,92,246,.15);color:#a78bfa;border-color:rgba(139,92,246,.5);font-weight:600}
+.btn-plan:hover{background:rgba(139,92,246,.25)}
+.btn-plan:disabled{opacity:.35;cursor:default}
+.btn-sm{padding:3px 9px;font-size:11px}
+button:disabled{opacity:.35;cursor:default}
 
-/* ── MAP ── */
-#map{position:fixed;top:var(--topbar-h);left:0;right:var(--panel-w);bottom:0;z-index:1;}
-.leaflet-container{background:#070c14;}
-.leaflet-control-zoom{border:1px solid var(--border)!important;}
-.leaflet-control-zoom a{background:var(--surface)!important;color:var(--text)!important;border-color:var(--border)!important;font-size:16px!important;line-height:26px!important;}
-.leaflet-control-zoom a:hover{background:var(--surface2)!important;}
-.leaflet-control-attribution{display:none;}
-/* keep leaflet attribution small bottom right */
+/* ─── Fault arm overlay ─────────────────────────────────── */
+#fault-banner{display:none;position:absolute;top:10px;left:50%;transform:translateX(-50%);
+  z-index:2000;background:#da3633;color:#fff;padding:6px 14px;border-radius:5px;
+  font-size:12px;font-weight:600;pointer-events:none;animation:blink 1s infinite alternate}
+@keyframes blink{from{opacity:.8}to{opacity:1}}
+#fault-overlay{display:none;position:absolute;inset:0;z-index:1900;cursor:crosshair;
+  border:3px solid #da3633;animation:blink 1s infinite alternate}
 
-/* fault cursor */
-body.fault-mode #map{cursor:crosshair!important;}
-.fault-marker{width:18px;height:18px;border:2px solid var(--red);border-radius:50%;background:rgba(239,68,68,.25);animation:pulse 1.2s ease-in-out infinite;}
-@keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(239,68,68,.55);}50%{box-shadow:0 0 0 10px rgba(239,68,68,0);}}
+/* ─── Map tiles dim ─────────────────────────────────────── */
+.leaflet-tile-pane{filter:brightness(.68) saturate(.35)}
 
-/* fault banner overlay */
-#fault-banner{
-  display:none;position:fixed;top:var(--topbar-h);left:0;right:var(--panel-w);z-index:200;
-  background:rgba(239,68,68,.85);backdrop-filter:blur(4px);
-  color:#fff;font-size:12px;font-weight:500;letter-spacing:.5px;text-align:center;
-  padding:9px 0;border-bottom:1px solid var(--red);
-}
-#fault-banner.show{display:flex;align-items:center;justify-content:center;gap:8px;}
+/* ─── Legend ────────────────────────────────────────────── */
+#legend{position:absolute;bottom:14px;left:10px;z-index:1000;
+        background:rgba(22,27,34,.9);backdrop-filter:blur(4px);
+        border:1px solid #30363d;border-radius:7px;padding:9px 11px;font-size:11px}
+#legend h4{font-size:9px;text-transform:uppercase;letter-spacing:.07em;color:#768390;margin-bottom:7px}
+.leg-row{display:flex;align-items:center;gap:7px;margin-bottom:4px;cursor:pointer;
+         padding:2px 5px;border-radius:4px;border:1px solid transparent;user-select:none}
+.leg-row:hover{border-color:#30363d}
+.leg-row.on{border-color:rgba(0,229,255,.3);background:rgba(0,229,255,.05)}
+.leg-sym{width:16px;display:flex;align-items:center;justify-content:center}
+.s-line{height:2px;width:16px;border-radius:1px}
+.s-circle{width:9px;height:9px;border-radius:50%}
+.s-diamond{width:9px;height:9px;transform:rotate(45deg);border-radius:1px}
+.s-tri{width:0;height:0;border-left:5px solid transparent;
+       border-right:5px solid transparent;border-bottom:9px solid}
 
-/* build error */
-#build-error{
-  display:none;position:fixed;top:var(--topbar-h);left:0;right:var(--panel-w);z-index:2000;
-  background:rgba(239,68,68,.95);color:#fff;font-size:11px;
-  font-family:'IBM Plex Mono',monospace;padding:10px 16px;
-  border-bottom:1px solid #b91c1c;white-space:pre-wrap;word-break:break-all;
-  max-height:140px;overflow-y:auto;
-}
-#build-error.show{display:block;}
+/* ─── Sidebar Tabs ───────────────────────────────────────── */
+.tab-bar{display:flex;padding:10px 10px 0;gap:3px;border-bottom:1px solid #30363d}
+.tab-btn{flex:1;padding:6px;background:transparent;color:#768390;border:none;
+         border-bottom:2px solid transparent;font-size:12px;font-weight:500;
+         border-radius:0;cursor:pointer;transition:.15s}
+.tab-btn:hover{color:#c9d1d9}
+.tab-btn.active{color:#00e5ff;border-bottom-color:#00e5ff}
+.tab-pane{display:none;flex:1;overflow:hidden;flex-direction:column}
+.tab-pane.active{display:flex}
 
-/* ── RIGHT PANEL ── */
-#panel{
-  position:fixed;top:var(--topbar-h);right:0;width:var(--panel-w);bottom:0;
-  background:var(--surface);border-left:1px solid var(--border);
-  display:flex;flex-direction:column;z-index:900;
-}
-.tabs{display:flex;border-bottom:1px solid var(--border);flex-shrink:0;}
-.tab{
-  flex:1;text-align:center;padding:13px 0;cursor:pointer;
-  font-size:12px;font-weight:500;color:var(--muted);
-  border-bottom:2px solid transparent;transition:all .15s;letter-spacing:.5px;
-}
-.tab:hover{color:var(--text);}
-.tab.active{color:var(--accent);border-bottom-color:var(--accent);}
+/* switches tab */
+#sw-search{margin:9px 10px 5px;padding:5px 9px;background:#0d1117;
+           border:1px solid #30363d;border-radius:5px;color:#c9d1d9;
+           font-size:11px;font-family:monospace;width:calc(100% - 20px)}
+#sw-search:focus{outline:none;border-color:#00e5ff}
+#sw-list{flex:1;overflow-y:auto;padding:0 6px 10px}
+.sw-row{display:flex;align-items:center;gap:8px;padding:7px 9px;
+        border:1px solid #30363d;border-radius:5px;margin-bottom:4px;
+        cursor:pointer;transition:.15s}
+.sw-row:hover{background:rgba(255,255,255,.04)}
+.sw-row.sel{border-color:#00e5ff55;background:rgba(0,229,255,.05)}
+.sw-dot{width:9px;height:9px;border-radius:50%;flex-shrink:0}
+.sw-info{flex:1;min-width:0}
+.sw-id{font-size:11px;font-family:monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sw-sub{font-size:9px;color:#768390;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sw-tog{background:#0d1117;border:1px solid #30363d;color:#c9d1d9;
+        padding:2px 7px;font-size:10px;border-radius:4px}
+.sw-tog:hover{border-color:#00e5ff;color:#00e5ff}
 
-/* search */
-#search-wrap{padding:10px 12px;border-bottom:1px solid var(--border);flex-shrink:0;}
-#search{
-  width:100%;background:var(--surface2);border:1px solid var(--border);
-  color:var(--text);padding:8px 10px 8px 32px;border-radius:6px;
-  font-size:12px;font-family:'IBM Plex Sans Thai',sans-serif;outline:none;
-}
-#search::placeholder{color:var(--muted);}
-#search:focus{border-color:var(--accent);}
-.search-icon{position:absolute;left:22px;top:50%;transform:translateY(-50%);color:var(--muted);font-size:13px;pointer-events:none;}
-.search-box{position:relative;}
+/* feeders tab */
+#fd-list{flex:1;overflow-y:auto;padding:7px}
+.fd-row{display:flex;align-items:center;gap:9px;padding:7px 9px;
+        border:1px solid #30363d;border-radius:5px;margin-bottom:4px;
+        cursor:pointer;font-size:11px;font-family:monospace;transition:.15s}
+.fd-row:hover{background:rgba(255,255,255,.04)}
+.fd-row.sel{border-color:#00e5ff55;background:rgba(0,229,255,.05)}
+.fd-dot{width:11px;height:11px;border-radius:50%;flex-shrink:0;box-shadow:0 0 0 2px rgba(0,0,0,.4)}
+.fd-cnt{margin-left:auto;color:#768390}
+.fd-cb{font-size:9px;color:#d29922}
 
-#panel-content{flex:1;overflow-y:auto;}
-#panel-content::-webkit-scrollbar{width:3px;}
-#panel-content::-webkit-scrollbar-thumb{background:var(--border2);border-radius:3px;}
+/* status tab */
+#st-list{flex:1;overflow-y:auto;padding:7px;display:flex;flex-direction:column;gap:7px}
+.st-card{background:#0d1117;border:1px solid #30363d;border-radius:7px;padding:9px 11px}
+.st-card.warn-b{border-color:rgba(210,153,34,.4)}
+.st-card.bad-b{border-color:rgba(248,81,73,.4)}
+.st-title{font-size:9px;text-transform:uppercase;letter-spacing:.07em;color:#768390;
+          margin-bottom:7px;display:flex;align-items:center;gap:4px}
+.st-nums{display:flex;gap:14px}
+.st-num{display:flex;flex-direction:column}
+.st-val{font-size:20px;font-family:monospace}
+.st-lbl{font-size:9px;text-transform:uppercase;color:#768390}
+.chips{display:flex;flex-wrap:wrap;gap:4px;margin-top:5px}
+.chip{font-size:10px;font-family:monospace;padding:1px 6px;border-radius:20px;border:1px solid #30363d}
+.chip-w{border-color:rgba(210,153,34,.5);color:#d29922}
+.chip-r{border-color:rgba(248,81,73,.4);color:#f85149}
 
-/* ── SWITCH ROW ── */
-.sw-row{
-  display:flex;align-items:center;gap:10px;
-  padding:10px 14px;border-bottom:1px solid var(--border);
-  cursor:pointer;transition:background .12s;
-}
-.sw-row:hover{background:var(--surface2);}
-.sw-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0;}
-.sw-dot.closed{background:var(--green);box-shadow:0 0 5px var(--green);}
-.sw-dot.open  {background:var(--red);  box-shadow:0 0 5px var(--red);}
-.sw-info{flex:1;overflow:hidden;}
-.sw-id {font-family:'IBM Plex Mono',monospace;font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.sw-sub{font-size:10px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px;}
-.sw-toggle{width:36px;height:19px;border-radius:10px;position:relative;flex-shrink:0;transition:background .2s;}
-.sw-toggle.on {background:rgba(34,197,94,.3); border:1px solid var(--green);}
-.sw-toggle.off{background:rgba(239,68,68,.18);border:1px solid var(--red);}
-.sw-toggle::after{content:'';position:absolute;top:2px;width:13px;height:13px;border-radius:50%;transition:all .2s;}
-.sw-toggle.on ::after{left:20px;background:var(--green);}
-.sw-toggle.off::after{left:2px; background:var(--red);}
+/* scrollbar */
+::-webkit-scrollbar{width:4px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:#30363d;border-radius:4px}
 
-/* ── FEEDER ROW ── */
-.feeder-all-btn{
-  display:block;width:calc(100% - 24px);margin:10px 12px 2px;
-  padding:8px 12px;border-radius:6px;border:1px solid var(--accent);
-  background:rgba(56,189,248,.08);color:var(--accent);
-  font-size:12px;font-family:'IBM Plex Sans Thai',sans-serif;
-  cursor:default;text-align:left;font-weight:500;letter-spacing:.3px;
-}
-.feeder-row{
-  display:flex;align-items:center;gap:10px;
-  padding:9px 14px;border-bottom:1px solid var(--border);
-  transition:background .12s;cursor:pointer;
-}
-.feeder-row:hover{background:var(--surface2);}
-.feeder-swatch{width:10px;height:10px;border-radius:50%;flex-shrink:0;}
-.feeder-name{font-family:'IBM Plex Mono',monospace;font-size:12px;font-weight:600;flex:1;}
-.feeder-segs{font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--muted);white-space:nowrap;}
+/* ─── Map Markers ────────────────────────────────────────── */
+.m-sw{width:11px;height:11px;border-radius:50%;border:1.5px solid rgba(0,0,0,.5)}
+.m-sw.cl{background:#3fb950;box-shadow:0 0 5px rgba(63,185,80,.7)}
+.m-sw.op{background:#f85149;box-shadow:0 0 5px rgba(248,81,73,.7)}
+.m-rc{width:0;height:0;border-left:5px solid transparent;border-right:5px solid transparent;
+      border-bottom:9px solid #ffd600;filter:drop-shadow(0 0 3px rgba(255,214,0,.7))}
+.m-fault{width:18px;height:18px;border-radius:50%;
+         background:radial-gradient(circle,#f85149,#991b1b);
+         border:2px solid #fff;box-shadow:0 0 10px rgba(248,81,73,.9);animation:blink 1s infinite}
 
-/* ── STATUS TAB ── */
-.status-section{padding:0;}
-.status-block{padding:16px 14px;border-bottom:1px solid var(--border);}
-.status-block-title{font-size:10px;text-transform:uppercase;letter-spacing:1px;color:var(--muted);margin-bottom:10px;display:flex;align-items:center;gap:6px;}
-.status-num-big{font-family:'IBM Plex Mono',monospace;font-size:28px;font-weight:600;line-height:1;}
-.status-num-sub{font-size:11px;color:var(--muted);margin-top:3px;}
-.status-kv{display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid var(--border);font-size:12px;}
-.status-kv:last-child{border-bottom:none;}
-.status-kv .k{color:var(--muted);}
-.status-kv .v{font-family:'IBM Plex Mono',monospace;font-weight:600;}
-.status-kv .v.green {color:var(--green);}
-.status-kv .v.red   {color:var(--red);}
-.status-kv .v.yellow{color:var(--yellow);}
-.status-kv .v.accent{color:var(--accent);}
+/* ─── Switching Plan Panel ───────────────────────────────── */
+#plan-backdrop{display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);
+               z-index:3000;backdrop-filter:blur(2px)}
+#plan-panel{display:none;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);
+            z-index:3100;background:#161b22;border:1px solid #30363d;border-radius:10px;
+            width:min(640px,95vw);max-height:85vh;display:none;flex-direction:column;
+            box-shadow:0 20px 60px rgba(0,0,0,.6)}
+#plan-backdrop.open,#plan-panel.open{display:flex}
+#plan-panel.open{display:flex}
 
-/* fault status block */
-.fault-none{color:var(--muted);font-size:12px;margin-top:4px;}
-.fault-active{color:var(--red);font-size:12px;font-weight:600;margin-top:4px;}
+.plan-header{padding:14px 16px 10px;border-bottom:1px solid #30363d;
+             display:flex;align-items:center;gap:10px}
+.plan-title{font-size:14px;font-weight:600;color:#a78bfa;flex:1}
+.plan-close{background:transparent;border:none;color:#768390;font-size:18px;
+            padding:0 4px;cursor:pointer}
+.plan-close:hover{color:#c9d1d9}
 
-.affected-grid{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;}
-.affected-chip{
-  padding:4px 9px;border-radius:4px;
-  background:var(--surface2);border:1px solid var(--border2);
-  font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--text);
-}
+.plan-summary{padding:10px 16px;background:rgba(139,92,246,.08);border-bottom:1px solid #30363d;
+              font-size:11px;color:#c9d1d9;font-family:monospace;line-height:1.6}
+.plan-summary b{color:#a78bfa}
 
-/* ── LAYERS PANEL ── */
-#layers{
-  position:fixed;bottom:20px;left:14px;
-  background:var(--surface);border:1px solid var(--border);
-  border-radius:10px;padding:10px 14px;z-index:800;min-width:160px;
-}
-.lyr-title{font-size:9px;text-transform:uppercase;letter-spacing:1.2px;color:var(--muted);margin-bottom:8px;}
-.lyr-row{display:flex;align-items:center;gap:9px;padding:5px 0;cursor:pointer;font-size:12px;user-select:none;transition:opacity .15s;}
-.lyr-row.inactive{opacity:.3;}
+.plan-meta{display:flex;gap:8px;flex-wrap:wrap;padding:8px 16px;border-bottom:1px solid #30363d}
+.meta-chip{padding:3px 10px;border-radius:20px;font-size:10px;font-family:monospace;
+           border:1px solid #30363d;background:rgba(255,255,255,.04)}
 
-/* ── POPUP ── */
-.leaflet-popup-content-wrapper{
-  background:var(--surface);border:1px solid var(--border);
-  color:var(--text);border-radius:8px;
-  box-shadow:0 8px 32px rgba(0,0,0,.7);
-  font-family:'IBM Plex Sans Thai',sans-serif;font-size:12px;
-  min-width:200px;
-}
-.leaflet-popup-tip{background:var(--surface);}
-.leaflet-popup-close-button{color:var(--muted)!important;}
-.popup-id{font-family:'IBM Plex Mono',monospace;font-weight:600;font-size:13px;margin-bottom:8px;}
-.popup-row{display:flex;justify-content:space-between;gap:16px;padding:3px 0;}
-.popup-row .pk{color:var(--muted);}
-.popup-row .pv{font-weight:500;}
-.popup-btn{
-  width:100%;margin-top:10px;padding:7px;border-radius:6px;
-  border:1px solid var(--border);background:var(--surface2);
-  color:var(--text);cursor:pointer;font-size:12px;
-  font-family:'IBM Plex Sans Thai',sans-serif;transition:background .15s;
-}
-.popup-btn:hover{background:var(--border);}
-.popup-btn.open-sw {border-color:var(--red);  color:var(--red);}
-.popup-btn.close-sw{border-color:var(--green);color:var(--green);}
+.plan-steps{flex:1;overflow-y:auto;padding:10px 12px}
+.plan-step{display:flex;align-items:flex-start;gap:10px;padding:10px 10px;
+           border:1px solid #30363d;border-radius:7px;margin-bottom:7px;transition:.2s}
+.plan-step.done{opacity:.45;border-color:#238636;background:rgba(35,134,54,.06)}
+.plan-step.active-step{border-color:#a78bfa;background:rgba(139,92,246,.07)}
 
-/* ── TOAST ── */
-#toast{
-  position:fixed;bottom:80px;left:50%;
-  transform:translateX(-50%) translateY(16px);
-  background:var(--surface2);border:1px solid var(--border);
-  color:var(--text);padding:8px 18px;border-radius:20px;
-  font-size:12px;opacity:0;transition:all .2s;z-index:2000;pointer-events:none;
-}
-#toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
+.step-num{width:24px;height:24px;border-radius:50%;border:1.5px solid #30363d;
+          display:flex;align-items:center;justify-content:center;font-size:11px;
+          font-family:monospace;flex-shrink:0;margin-top:1px}
+.step-action{display:inline-block;padding:2px 8px;border-radius:3px;font-size:10px;
+             font-weight:700;letter-spacing:.05em;margin-right:6px;font-family:monospace}
+.action-OPEN{background:rgba(248,81,73,.15);color:#f85149;border:1px solid rgba(248,81,73,.3)}
+.action-CLOSE{background:rgba(63,185,80,.12);color:#3fb950;border:1px solid rgba(63,185,80,.3)}
+
+.step-body{flex:1;min-width:0}
+.step-sw{font-size:12px;font-family:monospace;font-weight:600}
+.step-feeder{font-size:10px;color:#768390;margin-top:2px}
+.step-reason{font-size:11px;color:#c9d1d9;margin-top:3px}
+.step-restore{font-size:11px;color:#3fb950;font-family:monospace;font-weight:600;margin-top:3px}
+
+.step-exec{flex-shrink:0}
+
+.plan-footer{padding:10px 14px;border-top:1px solid #30363d;display:flex;align-items:center;gap:8px}
+#plan-progress{flex:1;font-size:11px;color:#768390;font-family:monospace}
+#btn-exec-all{padding:6px 16px;font-size:12px;font-weight:600;
+              background:#7c3aed;color:#fff;border-color:#7c3aed;border-radius:5px}
+#btn-exec-all:hover{background:#6d28d9}
+#btn-exec-all:disabled{opacity:.35;cursor:default}
+
+/* progress bar */
+.prog-bar{height:3px;background:#30363d;border-radius:2px;margin-top:4px}
+.prog-fill{height:100%;background:#7c3aed;border-radius:2px;transition:width .3s}
 </style>
 </head>
 <body>
+<div id="app">
 
-<!-- ═══════ TOPBAR ═══════ -->
-<div id="topbar">
-  <div id="brand">
-    <img id="brand-logo" src="{{ url_for('static', filename='logo.png') }}" alt="PEA SPARK"
-         onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
-    <div id="brand-fallback" style="display:none;width:36px;height:36px;border-radius:8px;background:linear-gradient(135deg,#0ea5e9,#38bdf8);align-items:center;justify-content:center;font-size:18px;box-shadow:0 0 12px rgba(56,189,248,.4);flex-shrink:0;">⚡</div>
-    <div id="brand-text">
-      <div class="title">SCADA · Distribution Grid</div>
-      <div class="sub">Provincial Electricity Authority · Live network model</div>
+  <!-- ─── Header ─────────────────────────────────────────────── -->
+  <header>
+    <div class="brand">
+      <div class="brand-icon">⚡</div>
+      <div>
+        <div class="brand-title">SCADA · Distribution Grid</div>
+        <div class="brand-sub">Provincial Electricity Authority · Prachuap Khiri Khan</div>
+      </div>
     </div>
+
+    <div class="stats">
+      <div class="stat">
+        <span class="stat-icon">⚡</span>
+        <div><div class="stat-label">Energized</div>
+             <div class="stat-value" id="h-pct">—%</div></div>
+      </div>
+      <div class="stat">
+        <span class="stat-icon">⏻</span>
+        <div><div class="stat-label">Open Switches</div>
+             <div class="stat-value" id="h-sw">—/—</div></div>
+      </div>
+      <div class="stat">
+        <span class="stat-icon">🔌</span>
+        <div><div class="stat-label">Source CBs Open</div>
+             <div class="stat-value" id="h-cb">—/—</div></div>
+      </div>
+      <div class="stat">
+        <span class="stat-icon">⚠</span>
+        <div><div class="stat-label">Fault Feeder</div>
+             <div class="stat-value mute" id="h-ff">none</div></div>
+      </div>
+    </div>
+
+    <div class="btns">
+      <button class="btn-ghost btn-sm" onclick="refreshAll()" title="Refresh">↺</button>
+      <button class="btn-out btn-sm" id="btn-arm" onclick="toggleArm()">📍 Place fault</button>
+      <button class="btn-success btn-sm" id="btn-clear" onclick="clearFault()" disabled>Clear fault</button>
+      <button class="btn-plan btn-sm" id="btn-plan" onclick="openPlanModal()" disabled
+              title="วิเคราะห์ switching เพื่อลดผลกระทบ">⚙ Generate Plan</button>
+    </div>
+  </header>
+
+  <!-- ─── Main ───────────────────────────────────────────────── -->
+  <div id="main">
+    <div id="map-wrap">
+      <div id="map"></div>
+      <div id="fault-overlay" onclick="handleFaultClick(event)"></div>
+      <div id="fault-banner">⚠ คลิกบนแผนที่เพื่อวางจุดฟอลต์</div>
+
+      <!-- Legend -->
+      <div id="legend">
+        <h4>Layers</h4>
+        <div class="leg-row on" id="leg-sub" onclick="toggleLayer('substations')">
+          <div class="leg-sym"><div class="s-diamond" style="background:#fde047"></div></div><span>Source CBs</span>
+        </div>
+        <div class="leg-row on" id="leg-swi" onclick="toggleLayer('switches')">
+          <div class="leg-sym"><div class="s-circle" style="background:#3fb950"></div></div><span>Switches</span>
+        </div>
+        <div class="leg-row on" id="leg-rec" onclick="toggleLayer('reclosers')">
+          <div class="leg-sym"><div class="s-tri" style="border-bottom-color:#ffd600"></div></div><span>Reclosers</span>
+        </div>
+        <div class="leg-row" id="leg-xfm" onclick="toggleLayer('transformers')">
+          <div class="leg-sym"><div class="s-circle" style="background:#fbbf24"></div></div><span>Transformers</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Sidebar -->
+    <aside id="sidebar">
+      <div class="tab-bar">
+        <button class="tab-btn active" onclick="tab('switches',this)">Switches</button>
+        <button class="tab-btn"        onclick="tab('feeders',this)">Feeders</button>
+        <button class="tab-btn"        onclick="tab('status',this)">Status</button>
+      </div>
+      <div class="tab-pane active" id="tab-switches">
+        <input id="sw-search" placeholder="ค้นหา id, feeder, location…" oninput="renderSwitches()" />
+        <div id="sw-list"></div>
+      </div>
+      <div class="tab-pane" id="tab-feeders">
+        <div id="fd-list"></div>
+      </div>
+      <div class="tab-pane" id="tab-status">
+        <div id="st-list"></div>
+      </div>
+    </aside>
+  </div>
+</div>
+
+<!-- ─── Switching Plan Modal ────────────────────────────── -->
+<div id="plan-backdrop" onclick="closePlanModal()"></div>
+<div id="plan-panel">
+  <div class="plan-header">
+    <span style="font-size:18px">⚙</span>
+    <div class="plan-title">Switching Plan — Fault Isolation & Service Restoration</div>
+    <button class="plan-close" onclick="closePlanModal()">✕</button>
   </div>
 
-  <!-- Energized % -->
-  <div class="stat-pill">
-    <div class="pill-icon energized">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
-    </div>
+  <div class="plan-summary" id="plan-summary">กำลังวิเคราะห์…</div>
+
+  <div class="plan-meta" id="plan-meta"></div>
+
+  <div class="plan-steps" id="plan-steps"></div>
+
+  <div class="plan-footer">
     <div>
-      <div class="label">Energized</div>
-      <div class="value ok" id="tb-energized">--%</div>
+      <div id="plan-progress">—</div>
+      <div class="prog-bar"><div class="prog-fill" id="prog-fill" style="width:0%"></div></div>
     </div>
-  </div>
-
-  <!-- Open Switches -->
-  <div class="stat-pill">
-    <div class="pill-icon switches">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-    </div>
-    <div>
-      <div class="label">Open Switches</div>
-      <div class="value info" id="tb-switches">-- / --</div>
-    </div>
-  </div>
-
-  <!-- Fault Feeder -->
-  <div class="stat-pill">
-    <div class="pill-icon fault">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-    </div>
-    <div>
-      <div class="label">Fault Feeder</div>
-      <div class="value ok" id="tb-fault">none</div>
-    </div>
-  </div>
-
-  <div id="topbar-actions">
-    <!-- refresh -->
-    <button class="btn icon-only" onclick="loadData()" title="Refresh">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>
-    </button>
-    <!-- place fault -->
-    <button class="btn primary" id="place-fault-btn" onclick="toggleFaultMode()">
-      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
-      Place fault
-    </button>
-    <!-- clear fault -->
-    <button class="btn danger" id="clear-fault-btn" onclick="clearFault()">
-      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-      Clear fault
-    </button>
+    <button id="btn-exec-all" onclick="executeAll()" disabled>▶ Execute All Steps</button>
+    <button class="btn-out btn-sm" onclick="closePlanModal()">Close</button>
   </div>
 </div>
-
-<!-- MAP -->
-<div id="map"></div>
-<div id="build-error"></div>
-<div id="fault-banner">
-  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-  Click anywhere on the map to place a fault
-</div>
-
-<!-- ═══════ RIGHT PANEL ═══════ -->
-<div id="panel">
-  <div class="tabs">
-    <div class="tab active" data-tab="switches" onclick="switchTab('switches')">Switches</div>
-    <div class="tab"        data-tab="feeders"  onclick="switchTab('feeders')">Feeders</div>
-    <div class="tab"        data-tab="status"   onclick="switchTab('status')">Status</div>
-  </div>
-  <div id="search-wrap">
-    <div class="search-box">
-      <span class="search-icon">🔍</span>
-      <input id="search" type="text" placeholder="Search switch id, feeder, location…" oninput="renderSwitches()">
-    </div>
-  </div>
-  <div id="panel-content"></div>
-</div>
-
-<!-- ═══════ LAYERS ═══════ -->
-<div id="layers">
-  <div class="lyr-title">⊞ Layers</div>
-  <div class="lyr-row active" id="lyr-switches" onclick="toggleLayer('switches')">
-    <div style="width:10px;height:10px;border-radius:50%;background:#22c55e;box-shadow:0 0 5px #22c55e;flex-shrink:0;"></div>
-    <span style="color:#22c55e;">Switches</span>
-  </div>
-  <div class="lyr-row active" id="lyr-reclosers" onclick="toggleLayer('reclosers')">
-    <div style="width:0;height:0;border-left:6px solid transparent;border-right:6px solid transparent;border-bottom:11px solid #f59e0b;flex-shrink:0;"></div>
-    <span style="color:#f59e0b;">Reclosers</span>
-  </div>
-  <div class="lyr-row active" id="lyr-transformers" onclick="toggleLayer('transformers')">
-    <div style="width:10px;height:10px;background:#facc15;border-radius:2px;flex-shrink:0;"></div>
-    <span style="color:#facc15;">Transformers</span>
-  </div>
-</div>
-
-<div id="toast"></div>
 
 <script>
-// ══════════════════════════════════════════════════════════
-// MAP INIT
-// ══════════════════════════════════════════════════════════
-var map = L.map('map',{
-  zoomControl:true,
-  attributionControl:true
-}).setView([13.75,100.5],13);
+// ─── App state ────────────────────────────────────────────
+const D = {
+  conductors:[], switches:[], reclosers:[], transformers:[], substations:[],
+  feeders:[], scada:null,
+  fault:{active:false,feeder:null,lat:null,lon:null},
+  feederFilter:null, selectedSwitch:null, armMode:false,
+  layers:{switches:true,reclosers:true,transformers:false,substations:true},
+  plan:null, planDone:0,
+};
 
-var canvasRenderer = L.canvas({padding:0.5});
+// ─── Leaflet ──────────────────────────────────────────────
+const map = L.map("map",{zoomControl:true,preferCanvas:true}).setView([11.81,99.79],12);
+L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+  {attribution:"© OpenStreetMap contributors",maxZoom:19}).addTo(map);
 
-L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',{maxZoom:20}).addTo(map);
+const lyr = {
+  conductors:  L.layerGroup().addTo(map),
+  switches:    L.layerGroup().addTo(map),
+  reclosers:   L.layerGroup().addTo(map),
+  transformers:L.layerGroup(),
+  substations: L.layerGroup().addTo(map),
+  fault:       L.layerGroup().addTo(map),
+};
 
-var linesLayer  = null;
-var switchLayer = null;
-var faultMarker = null;
-var faultMode   = false;
-var allSwitches = [];
-var currentTab  = 'switches';
-var scadaData   = {};
-var layerVis    = {switches:true,reclosers:true,transformers:true};
-var didFitBounds = false;
-var _buildChecked = false;
+// ─── Fetch helpers ────────────────────────────────────────
+const j = url => fetch(url).then(r=>r.json());
+const post = (url,body={}) => fetch(url,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)}).then(r=>r.json());
 
-// ══════════════════════════════════════════════════════════
-// LINE STYLE
-// ══════════════════════════════════════════════════════════
-function styleLines(f){
-  var on = f.properties.status === "on";
-  return{
-    color:   on ? f.properties.color : "#1a2840",
-    weight:  on ? 3.5 : 1.0,
-    opacity: on ? 1.0 : 0.18,
-    lineCap:'round',lineJoin:'round'
-  };
+async function loadAll(){
+  const [co,sw,rc,xf,sub,fd,sc] = await Promise.all([
+    j("/conductor"),j("/switches"),j("/reclosers"),
+    j("/transformers"),j("/substations"),j("/feeders"),j("/scada"),
+  ]);
+  D.conductors=co.features; D.switches=sw.features; D.reclosers=rc.features;
+  D.transformers=xf.features; D.substations=sub.features;
+  D.feeders=fd.feeders; D.scada=sc;
+  if(sc.faultActive) D.fault={active:true,feeder:sc.faultFeeder,lat:null,lon:null};
+  renderAll(); fitBounds();
 }
 
-// ══════════════════════════════════════════════════════════
-// SWITCH MARKERS  (ใช้ CircleMarker + DivIcon ผสมกัน)
-//   Disconnect  → ⬤ วงกลม  เขียว/แดง
-//   Load Break  → ■ divIcon สี่เหลี่ยม
-//   Switch(TVS) → ◆ divIcon ข้าวหลามตัด
-//   Recloser    → ▲ divIcon สามเหลี่ยม ส้ม
-//   Transformer → ■ วงกลมเหลือง
-// ══════════════════════════════════════════════════════════
-function makeSwitchMarker(f, latlng){
-  var p      = f.properties;
-  var isOpen = p.status === 0;
-  var t      = (p.type||'disconnect').toLowerCase();
-  var sc     = isOpen ? '#ef4444' : '#22c55e';
+async function refreshLive(){
+  const [co,sw,sub,sc] = await Promise.all([
+    j("/conductor"),j("/switches"),j("/substations"),j("/scada"),
+  ]);
+  D.conductors=co.features; D.switches=sw.features; D.substations=sub.features; D.scada=sc;
+  drawConductors(); drawSwitches(); drawSubstations();
+  updateHeader(); renderStatus(); renderSwitches();
+}
+const refreshAll = ()=>loadAll();
 
-  if(t === 'recloser'){
-    var rc = isOpen ? '#fb923c' : '#f59e0b';
-    return L.marker(latlng,{
-      icon: L.divIcon({
-        className:'',
-        html:'<div style="width:0;height:0;border-left:7px solid transparent;border-right:7px solid transparent;border-bottom:13px solid '+rc+';"></div>',
-        iconSize:[14,13], iconAnchor:[7,13]
-      }),
-      zIndexOffset:100
-    });
+// ─── Render all ──────────────────────────────────────────
+function renderAll(){
+  drawConductors(); drawSwitches(); drawReclosers(); drawTransformers(); drawSubstations();
+  updateHeader(); renderSwitches(); renderFeeders(); renderStatus();
+}
+
+// ─── Map icon helper ──────────────────────────────────────
+const di=(html,sz,anc)=>L.divIcon({className:"",html,iconSize:sz,iconAnchor:anc||[sz[0]/2,sz[1]/2]});
+
+// ─── Draw conductors ──────────────────────────────────────
+function drawConductors(){
+  lyr.conductors.clearLayers();
+  const ff=D.feederFilter;
+  const sorted=[...D.conductors].sort((a,b)=>(a.properties.status==="off"?1:0)-(b.properties.status==="off"?1:0));
+  for(const f of sorted){
+    if(ff && f.properties.feeder!==ff) continue;
+    const off=f.properties.status==="off";
+    const pts=f.geometry.coordinates.map(([lo,la])=>[la,lo]);
+    L.polyline(pts,{color:off?"#3a3f4a":f.properties.color,
+      weight:off?1.5:2.1,opacity:off?.45:.95,dashArray:off?"4 4":null}).addTo(lyr.conductors);
   }
+}
 
-  if(t === 'transformer'){
-    return L.circleMarker(latlng,{
-      radius:5, color:'#facc15', fillColor:'#facc15',
-      fillOpacity:1, weight:1.5, opacity:0.9
-    });
+// ─── Draw switches ────────────────────────────────────────
+function drawSwitches(){
+  lyr.switches.clearLayers();
+  if(!D.layers.switches) return;
+  for(const f of D.switches){
+    if(D.feederFilter && f.properties.feeder!==D.feederFilter) continue;
+    const [lo,la]=f.geometry.coordinates;
+    const cl=f.properties.status===1;
+    const sel=D.selectedSwitch===f.properties.id;
+    const out=sel?"outline:3px solid #00e5ff;outline-offset:2px;":"";
+    const icon=di(`<div class="m-sw ${cl?"cl":"op"}" style="${out}"></div>`,[11,11]);
+    L.marker([la,lo],{icon})
+      .bindPopup(swPopup(f))
+      .on("click",()=>{D.selectedSwitch=f.properties.id;renderSwitches();})
+      .addTo(lyr.switches);
   }
+}
+function swPopup(f){
+  const p=f.properties,cl=p.status===1;
+  return `<div style="font-family:monospace;font-size:11px;min-width:175px">
+    <b>${p.id}</b><br>
+    State:<span style="color:${cl?"#3fb950":"#f85149"}">${p.state}</span>
+     · Feeder:${p.feeder} · ${p.kind}<br>
+    ${p.location?`<span style="color:#768390">${p.location}</span><br>`:""}
+    <button onclick="doToggleSw('${p.id}')" style="margin-top:5px;width:100%;padding:4px;
+      border:1px solid #00e5ff;background:transparent;color:#00e5ff;border-radius:4px;cursor:pointer">
+      ${cl?"Open switch":"Close switch"}
+    </button></div>`;
+}
 
-  if(t === 'load break'){
-    return L.marker(latlng,{
-      icon: L.divIcon({
-        className:'',
-        html:'<div style="width:10px;height:10px;background:'+sc+';border:1.5px solid rgba(255,255,255,.4);box-shadow:0 0 5px '+sc+';"></div>',
-        iconSize:[10,10], iconAnchor:[5,5]
-      })
-    });
+// ─── Draw reclosers ───────────────────────────────────────
+function drawReclosers(){
+  lyr.reclosers.clearLayers();
+  if(!D.layers.reclosers) return;
+  for(const f of D.reclosers){
+    const [lo,la]=f.geometry.coordinates;
+    const p=f.properties;
+    L.marker([la,lo],{icon:di('<div class="m-rc"></div>',[10,9],[5,9])})
+      .bindPopup(`<b>Recloser ${p.id}</b><br>Feeder:${p.feeder}<br><span style="color:#768390">${p.location||""}</span>`)
+      .addTo(lyr.reclosers);
   }
+}
 
-  if(t === 'switch'){
-    return L.marker(latlng,{
-      icon: L.divIcon({
-        className:'',
-        html:'<div style="width:9px;height:9px;background:'+sc+';border:1.5px solid rgba(255,255,255,.35);transform:rotate(45deg);"></div>',
-        iconSize:[11,11], iconAnchor:[5,5]
-      })
-    });
+// ─── Draw transformers ────────────────────────────────────
+function drawTransformers(){
+  lyr.transformers.clearLayers();
+  if(!D.layers.transformers) return;
+  for(const f of D.transformers){
+    const [lo,la]=f.geometry.coordinates, p=f.properties;
+    L.marker([la,lo],{icon:di('<div style="width:6px;height:6px;border-radius:50%;background:#fbbf24;box-shadow:0 0 4px rgba(251,191,36,.7)"></div>',[6,6])})
+      .bindPopup(`<b>${p.id}</b><br>Feeder:${p.feeder}${p.rateKva?`<br>${p.rateKva} kVA`:""}<br><span style="color:#768390">${p.location||""}</span>`)
+      .addTo(lyr.transformers);
   }
-
-  // Disconnect default → circleMarker (most reliable)
-  return L.circleMarker(latlng,{
-    radius:5,
-    color: isOpen ? '#ef4444' : '#22c55e',
-    fillColor: isOpen ? '#ef4444' : '#22c55e',
-    fillOpacity:1, weight:2, opacity:0.9
-  });
 }
 
-// ══════════════════════════════════════════════════════════
-// POPUP
-// ══════════════════════════════════════════════════════════
-function showSwitchPopup(f, layer){
-  var p = f.properties, isOpen = p.status===0;
-  layer.bindPopup(`
-    <div class="popup-id">${p.id}</div>
-    <div class="popup-row"><span class="pk">Feeder</span><span class="pv">${p.feeder||'-'}</span></div>
-    <div class="popup-row"><span class="pk">Type</span><span class="pv">${p.type||'Disconnect'}</span></div>
-    <div class="popup-row"><span class="pk">Location</span><span class="pv">${p.location||'-'}</span></div>
-    <div class="popup-row"><span class="pk">State</span>
-      <span class="pv" style="color:${isOpen?'#ef4444':'#22c55e'}">${isOpen?'OPEN':'CLOSE'}</span>
-    </div>
-    <button class="popup-btn ${isOpen?'close-sw':'open-sw'}" onclick="toggleSwitch('${p.id}')">
-      ${isOpen?'⊕ Close switch':'⊖ Open switch'}
-    </button>
-  `,{maxWidth:240}).openPopup();
+// ─── Draw substations ─────────────────────────────────────
+function drawSubstations(){
+  lyr.substations.clearLayers();
+  if(!D.layers.substations) return;
+  for(const f of D.substations){
+    const [lo,la]=f.geometry.coordinates, p=f.properties;
+    const cl=p.status===1;
+    const col=cl?"#fde047":"#ef4444",glo=cl?"rgba(253,224,71,.7)":"rgba(239,68,68,.7)";
+    const icon=di(`<div style="width:14px;height:14px;transform:rotate(45deg);background:${col};
+      border:2px solid rgba(0,0,0,.5);box-shadow:0 0 0 2px rgba(0,0,0,.2),0 0 8px ${glo};border-radius:2px"></div>`,[14,14]);
+    L.marker([la,lo],{icon})
+      .bindPopup(`<div style="font-family:monospace;font-size:11px;min-width:185px">
+        <b style="color:#fde047">⚡ Source CB</b> · <b>${p.id}</b><br>
+        Feeder:<span style="color:#00e5ff">${p.feeder}</span> · 
+        State:<span style="color:${cl?"#3fb950":"#ef4444"}">${p.state}</span>
+        ${p.opVolt?`<br>Voltage:${p.opVolt}`:""}
+        ${p.location?`<br><span style="color:#768390">${p.location}</span>`:""}
+        <br><button onclick="doToggleCB('${p.id}')" style="margin-top:5px;width:100%;padding:4px;
+          border:1px solid ${cl?"#ef4444":"#3fb950"};background:transparent;
+          color:${cl?"#ef4444":"#3fb950"};border-radius:4px;cursor:pointer">
+          ${cl?"Open CB":"Close CB"}
+        </button></div>`)
+      .addTo(lyr.substations);
+  }
 }
 
-function toggleSwitch(id){
-  fetch('/toggle_switch?id='+id).then(()=>{loadData();showToast('Toggled: '+id);});
+// ─── Draw fault marker ────────────────────────────────────
+function drawFault(){
+  lyr.fault.clearLayers();
+  const f=D.fault;
+  if(f.active && f.lat!=null && f.lon!=null){
+    L.marker([f.lat,f.lon],{icon:di('<div class="m-fault"></div>',[18,18])})
+      .bindPopup(`<b style="color:#f85149">⚠ Fault</b><br>Feeder:${f.feeder||"?"}<br>${f.lat?.toFixed(5)},${f.lon?.toFixed(5)}`)
+      .addTo(lyr.fault);
+  }
 }
 
-// ══════════════════════════════════════════════════════════
-// RENDER SWITCH LAYER
-// ══════════════════════════════════════════════════════════
-function renderSwitchLayer(){
-  if(switchLayer){ map.removeLayer(switchLayer); switchLayer=null; }
-  var visible = allSwitches.filter(f=>{
-    var t = (f.properties.type||'').toLowerCase();
-    if(t==='recloser')    return layerVis.reclosers;
-    if(t==='transformer') return layerVis.transformers;
-    return layerVis.switches;
-  });
-  console.log('[SWITCH] rendering', visible.length, 'markers');
-  if(!visible.length) return;
-  try{
-    switchLayer = L.geoJSON({type:'FeatureCollection',features:visible},{
-      pointToLayer: function(f,latlng){
-        try{ return makeSwitchMarker(f,latlng); }
-        catch(e){
-          console.warn('[SWITCH] marker error',e,f.properties);
-          return L.circleMarker(latlng,{radius:5,color:'#22c55e',fillOpacity:1});
-        }
-      },
-      onEachFeature: function(f,layer){
-        layer.on('click',function(e){ L.DomEvent.stopPropagation(e); showSwitchPopup(f,layer); });
-      }
-    }).addTo(map);
-    console.log('[SWITCH] layer added ok, bounds:', switchLayer.getBounds());
-  }catch(e){ console.error('[SWITCH] geoJSON error:',e); }
+// ─── Fit bounds ───────────────────────────────────────────
+let fitted=false;
+function fitBounds(){
+  if(fitted||!D.conductors.length) return;
+  const b=L.latLngBounds([]);let n=0;
+  for(const c of D.conductors){
+    for(const [lo,la] of c.geometry.coordinates){b.extend([la,lo]);if(++n>5000)break}
+    if(n>5000)break;
+  }
+  if(b.isValid()){map.fitBounds(b,{padding:[40,40]});fitted=true;}
 }
 
-// ══════════════════════════════════════════════════════════
-// LAYER TOGGLE
-// ══════════════════════════════════════════════════════════
+// ─── Header stats ─────────────────────────────────────────
+function updateHeader(){
+  const sc=D.scada; if(!sc) return;
+  const tot=sc.nodesOn+sc.nodesOff, pct=tot>0?Math.round(sc.nodesOn/tot*100):0;
+  const pe=document.getElementById("h-pct");
+  pe.textContent=pct+"%"; pe.className="stat-value "+(pct>=95?"good":pct>=80?"warn":"bad");
+  document.getElementById("h-sw").textContent=`${sc.switchOpen}/${sc.switchTotal}`;
+  const ce=document.getElementById("h-cb");
+  ce.textContent=`${sc.cbOpen}/${sc.cbTotal}`; ce.className="stat-value "+(sc.cbOpen>0?"warn":"good");
+  const fe=document.getElementById("h-ff");
+  fe.textContent=sc.faultFeeder||"none"; fe.className="stat-value "+(sc.faultActive?"bad":"mute");
+  document.getElementById("btn-clear").disabled=!sc.faultActive;
+  document.getElementById("btn-plan").disabled=!sc.faultActive;
+}
+
+// ─── Layer toggles ────────────────────────────────────────
+const LEG_IDS={switches:"swi",reclosers:"rec",transformers:"xfm",substations:"sub"};
 function toggleLayer(name){
-  layerVis[name] = !layerVis[name];
-  document.getElementById('lyr-'+name).classList.toggle('inactive',!layerVis[name]);
-  renderSwitchLayer();
+  D.layers[name]=!D.layers[name];
+  document.getElementById("leg-"+LEG_IDS[name]).classList.toggle("on",D.layers[name]);
+  if(D.layers[name]) lyr[name].addTo(map); else map.removeLayer(lyr[name]);
+  ({switches:drawSwitches,reclosers:drawReclosers,transformers:drawTransformers,substations:drawSubstations}[name])?.();
 }
 
-// ══════════════════════════════════════════════════════════
-// FAULT MODE
-// ══════════════════════════════════════════════════════════
-function toggleFaultMode(){
-  faultMode = !faultMode;
-  document.body.classList.toggle('fault-mode',faultMode);
-  var btn = document.getElementById('place-fault-btn');
-  document.getElementById('fault-banner').classList.toggle('show',faultMode);
-  if(faultMode){
-    btn.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg> Cancel`;
-    btn.className = 'btn danger';
-  } else {
-    btn.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg> Place fault`;
-    btn.className = 'btn primary';
-  }
+// ─── Tabs ─────────────────────────────────────────────────
+function tab(name,btn){
+  document.querySelectorAll(".tab-btn").forEach(b=>b.classList.remove("active"));
+  document.querySelectorAll(".tab-pane").forEach(p=>p.classList.remove("active"));
+  btn.classList.add("active");
+  document.getElementById("tab-"+name).classList.add("active");
 }
 
-function clearFault(){
-  fetch('/clear_fault').then(()=>{
-    if(faultMarker){map.removeLayer(faultMarker);faultMarker=null;}
-    faultMode=false;
-    document.body.classList.remove('fault-mode');
-    document.getElementById('fault-banner').classList.remove('show');
-    var btn=document.getElementById('place-fault-btn');
-    btn.innerHTML=`<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg> Place fault`;
-    btn.className='btn primary';
-    loadData(); showToast('Fault cleared');
-  });
+// ─── Feeder filter ────────────────────────────────────────
+function setFeeder(f){
+  D.feederFilter=f; drawConductors(); drawSwitches(); renderFeeders(); renderSwitches();
 }
 
-map.on('click',function(e){
-  if(!faultMode) return;
-  fetch('/fault?lat='+e.latlng.lat+'&lon='+e.latlng.lng).then(r=>r.json()).then(d=>{
-    if(faultMarker) map.removeLayer(faultMarker);
-    faultMarker=L.marker([e.latlng.lat,e.latlng.lng],{
-      icon:L.divIcon({className:'',html:'<div class="fault-marker"></div>',iconSize:[18,18],iconAnchor:[9,9]}),
-      zIndexOffset:1000
-    }).addTo(map).bindPopup(`<b>⚠ Fault</b><br>Feeder: ${d.feeder}`).openPopup();
-    faultMode=false;
-    document.body.classList.remove('fault-mode');
-    document.getElementById('fault-banner').classList.remove('show');
-    var btn=document.getElementById('place-fault-btn');
-    btn.innerHTML=`<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg> Place fault`;
-    btn.className='btn primary';
-    loadData(); showToast('Fault: feeder '+d.feeder,true);
-  });
-});
-
-// ══════════════════════════════════════════════════════════
-// TOP BAR UPDATE
-// ══════════════════════════════════════════════════════════
-function updateTopBar(d){
-  var pct=d.energized_pct||0;
-  var el=document.getElementById('tb-energized');
-  el.textContent=pct+'%';
-  el.className='value '+(pct>=90?'ok':pct>=70?'warn':'error');
-  document.getElementById('tb-switches').textContent=(d.open_switches||0)+' / '+(d.total_switches||0);
-  var fEl=document.getElementById('tb-fault');
-  fEl.textContent=d.fault_feeder||'none';
-  fEl.className='value '+(d.fault_feeder?'error':'ok');
-}
-
-// ══════════════════════════════════════════════════════════
-// TABS
-// ══════════════════════════════════════════════════════════
-function switchTab(name){
-  currentTab=name;
-  document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('active',t.dataset.tab===name));
-  document.getElementById('search-wrap').style.display=name==='switches'?'':'none';
-  renderPanel();
-}
-function renderPanel(){
-  if(currentTab==='switches') renderSwitches();
-  if(currentTab==='feeders')  renderFeeders(scadaData);
-  if(currentTab==='status')   renderStatus(scadaData);
-}
-
-// ══════════════════════════════════════════════════════════
-// SWITCH LIST
-// ══════════════════════════════════════════════════════════
+// ─── Switch sidebar ───────────────────────────────────────
 function renderSwitches(){
-  var q    = (document.getElementById('search').value||'').toLowerCase();
-  var cont = document.getElementById('panel-content');
-  var items = allSwitches.filter(f=>{
-    var p=f.properties;
-    return !q||
-      (p.id||'').toLowerCase().includes(q)||
-      (p.feeder||'').toLowerCase().includes(q)||
-      (p.location||'').toLowerCase().includes(q)||
-      (p.type||'').toLowerCase().includes(q);
+  const q=(document.getElementById("sw-search").value||"").toLowerCase(), ff=D.feederFilter;
+  const list=D.switches.filter(f=>{
+    const p=f.properties;
+    if(ff&&p.feeder!==ff) return false;
+    if(!q) return true;
+    return [p.id,p.feeder,p.location,p.kind].some(v=>String(v||"").toLowerCase().includes(q));
   });
-  if(!items.length){
-    cont.innerHTML='<div style="padding:24px;text-align:center;color:var(--muted);">ไม่พบข้อมูล</div>';
-    return;
-  }
-  cont.innerHTML=items.map(f=>{
-    var p=f.properties, isOpen=p.status===0;
-    return `<div class="sw-row" onclick="flyTo(${JSON.stringify(f.geometry.coordinates)},'${p.id}')">
-      <div class="sw-dot ${isOpen?'open':'closed'}"></div>
+  const el=document.getElementById("sw-list");
+  if(!list.length){el.innerHTML='<div style="text-align:center;color:#768390;padding:20px;font-size:11px">ไม่พบ switch</div>';return;}
+  el.innerHTML=list.map(f=>{
+    const p=f.properties,cl=p.status===1,sel=D.selectedSwitch===p.id;
+    return `<div class="sw-row${sel?" sel":""}" onclick="selectSw('${p.id}')">
+      <span class="sw-dot" style="background:${cl?"#3fb950":"#f85149"};box-shadow:0 0 4px ${cl?"rgba(63,185,80,.6)":"rgba(248,81,73,.6)"}"></span>
       <div class="sw-info">
         <div class="sw-id">${p.id}</div>
-        <div class="sw-sub">${p.feeder||'UNK'} · ${p.type||'Disconnect'} · ${p.location||'-'}</div>
+        <div class="sw-sub">${p.feeder} · ${p.kind}${p.location?" · "+p.location:""}</div>
       </div>
-      <div class="sw-toggle ${isOpen?'off':'on'}"></div>
+      <button class="sw-tog" onclick="event.stopPropagation();doToggleSw('${p.id}')">${cl?"Open":"Close"}</button>
     </div>`;
-  }).join('');
+  }).join("");
 }
-function flyTo(coords,id){ map.flyTo([coords[1],coords[0]],16,{duration:0.7}); }
 
-// ══════════════════════════════════════════════════════════
-// FEEDERS LIST  (แสดง segs ตามรูปตัวอย่าง)
-// ══════════════════════════════════════════════════════════
-function renderFeeders(d){
-  var cont=document.getElementById('panel-content');
-  var fds=d.feeders||{};
-  if(!Object.keys(fds).length){
-    cont.innerHTML='<div style="padding:24px;text-align:center;color:var(--muted);">Loading…</div>';
+function selectSw(id){
+  D.selectedSwitch=id; renderSwitches();
+  const f=D.switches.find(s=>s.properties.id===id);
+  if(f){const [lo,la]=f.geometry.coordinates;map.panTo([la,lo]);}
+}
+
+// ─── Feeder sidebar ───────────────────────────────────────
+function renderFeeders(){
+  const cbMap={};
+  for(const s of D.substations){
+    const f=s.properties.feeder; cbMap[f]=cbMap[f]||[];
+    cbMap[f].push(s.properties.status);
+  }
+  const rows=[`<div class="fd-row${D.feederFilter===null?" sel":""}" onclick="setFeeder(null)">
+    <span class="fd-dot" style="background:#444"></span>All feeders</div>`];
+  for(const f of [...D.feeders].sort((a,b)=>b.edgeCount-a.edgeCount)){
+    const cbs=cbMap[f.id]||[], srcOpen=cbs.length&&cbs.every(s=>s===0);
+    rows.push(`<div class="fd-row${D.feederFilter===f.id?" sel":""}" onclick="setFeeder('${f.id}')">
+      <span class="fd-dot" style="background:${f.color}"></span>
+      <span>${f.id}</span>
+      ${srcOpen?'<span class="fd-cb">⚡ CB open</span>':""}
+      <span class="fd-cnt">${f.edgeCount.toLocaleString()}</span>
+    </div>`);
+  }
+  document.getElementById("fd-list").innerHTML=rows.join("");
+}
+
+// ─── Status sidebar ───────────────────────────────────────
+function renderStatus(){
+  const sc=D.scada; if(!sc) return;
+  const tot=sc.nodesOn+sc.nodesOff, pct=tot>0?Math.round(sc.nodesOn/tot*100):0;
+  const cbsOpen=D.substations.filter(s=>s.properties.status===0);
+  document.getElementById("st-list").innerHTML=[
+    `<div class="st-card">
+      <div class="st-title">⚡ Network Energization</div>
+      <div class="st-nums">
+        <div class="st-num"><div class="st-val good">${sc.nodesOn.toLocaleString()}</div><div class="st-lbl">Nodes on</div></div>
+        <div class="st-num"><div class="st-val bad">${sc.nodesOff.toLocaleString()}</div><div class="st-lbl">Nodes off</div></div>
+        <div class="st-num"><div class="st-val">${pct}%</div><div class="st-lbl">Energized</div></div>
+      </div></div>`,
+    `<div class="st-card${sc.cbOpen>0?" warn-b":""}">
+      <div class="st-title">🔌 Source CBs</div>
+      <div class="st-nums">
+        <div class="st-num"><div class="st-val warn">${sc.cbOpen}</div><div class="st-lbl">Open</div></div>
+        <div class="st-num"><div class="st-val good">${sc.cbTotal-sc.cbOpen}</div><div class="st-lbl">Closed</div></div>
+        <div class="st-num"><div class="st-val">${sc.cbTotal}</div><div class="st-lbl">Total</div></div>
+      </div>
+      ${cbsOpen.length?`<div class="chips">${cbsOpen.map(s=>`<span class="chip chip-w">${s.properties.feeder}</span>`).join("")}</div>`:""}</div>`,
+    `<div class="st-card">
+      <div class="st-title">⏻ Switching</div>
+      <div class="st-nums">
+        <div class="st-num"><div class="st-val">${sc.switchOpen}</div><div class="st-lbl">Open</div></div>
+        <div class="st-num"><div class="st-val mute">${sc.switchTotal-sc.switchOpen}</div><div class="st-lbl">Closed</div></div>
+        <div class="st-num"><div class="st-val">${sc.switchTotal}</div><div class="st-lbl">Total</div></div>
+      </div></div>`,
+    `<div class="st-card${sc.faultActive?" bad-b":""}">
+      <div class="st-title">⚠ Active Fault</div>
+      ${sc.faultActive
+        ?`<div>Feeder: <b style="color:#f85149">${sc.faultFeeder||"?"}</b>
+           ${D.fault.lat?`<div style="font-size:10px;color:#768390;font-family:monospace;margin-top:3px">${D.fault.lat?.toFixed(5)}, ${D.fault.lon?.toFixed(5)}</div>`:""}
+           <div style="margin-top:6px">
+             <button class="btn-plan btn-sm" onclick="openPlanModal()" style="width:100%">
+               ⚙ Generate Switching Plan
+             </button>
+           </div></div>`
+        :`<div style="font-size:11px;color:#768390">ไม่มี fault · กด Place fault เพื่อจำลอง</div>`}
+    </div>`,
+    (sc.feedersAffected||[]).length?
+      `<div class="st-card">
+        <div class="st-title">🔌 Feeders Affected</div>
+        <div class="chips">${sc.feedersAffected.map(f=>`<span class="chip">${f}</span>`).join("")}</div>
+      </div>`:"",
+    (sc.feedersSourceOpen||[]).length?
+      `<div class="st-card warn-b">
+        <div class="st-title">⚡ Feeders — Source CB Open</div>
+        <div class="chips">${sc.feedersSourceOpen.map(f=>`<span class="chip chip-w">${f}</span>`).join("")}</div>
+      </div>`:"",
+  ].join("");
+}
+
+// ─── API actions ─────────────────────────────────────────
+async function doToggleSw(id){
+  await fetch(`/switches/${encodeURIComponent(id)}/toggle`,{method:"POST"});
+  await refreshLive();
+}
+async function doToggleCB(id){
+  await fetch(`/substations/${encodeURIComponent(id)}/toggle`,{method:"POST"});
+  await refreshLive();
+}
+
+// ─── Fault ────────────────────────────────────────────────
+function toggleArm(){
+  D.armMode=!D.armMode;
+  document.getElementById("btn-arm").textContent=D.armMode?"❌ Cancel":"📍 Place fault";
+  document.getElementById("btn-arm").className=D.armMode?"btn-danger btn-sm":"btn-out btn-sm";
+  document.getElementById("fault-overlay").style.display=D.armMode?"block":"none";
+  document.getElementById("fault-banner").style.display=D.armMode?"block":"none";
+}
+
+function handleFaultClick(e){
+  if(!D.armMode) return;
+  const rect=e.currentTarget.getBoundingClientRect();
+  const latlng=map.containerPointToLatLng(L.point(e.clientX-rect.left,e.clientY-rect.top));
+  doSetFault(latlng.lat,latlng.lng);
+}
+
+async function doSetFault(lat,lon){
+  const f=await post("/fault",{lat,lon});
+  D.fault=f; toggleArm(); drawFault();
+  await refreshLive();
+}
+
+async function clearFault(){
+  await fetch("/fault",{method:"DELETE"});
+  D.fault={active:false,feeder:null,lat:null,lon:null};
+  D.plan=null; D.planDone=0;
+  drawFault(); await refreshLive();
+}
+
+// ─────────────────────────────────────────────────────────
+// SWITCHING PLAN MODAL
+// ─────────────────────────────────────────────────────────
+async function openPlanModal(){
+  // Show modal skeleton
+  document.getElementById("plan-backdrop").classList.add("open");
+  document.getElementById("plan-panel").classList.add("open");
+  document.getElementById("plan-summary").innerHTML="⏳ กำลังวิเคราะห์ switching plan…";
+  document.getElementById("plan-meta").innerHTML="";
+  document.getElementById("plan-steps").innerHTML="";
+  document.getElementById("plan-progress").textContent="—";
+  document.getElementById("prog-fill").style.width="0%";
+  document.getElementById("btn-exec-all").disabled=true;
+
+  // Call API
+  let plan;
+  try{
+    plan=await post("/switching-plan");
+  }catch(err){
+    document.getElementById("plan-summary").innerHTML=`<span style="color:#f85149">❌ เกิดข้อผิดพลาด: ${err}</span>`;
     return;
   }
-  // เรียงตาม segs จากมากไปน้อย (ตามรูปตัวอย่าง)
-  var sorted = Object.entries(fds).sort((a,b)=>(b[1].segs||0)-(a[1].segs||0));
-  cont.innerHTML =
-    '<div class="feeder-all-btn">All feeders</div>' +
-    sorted.map(([id,fd])=>`
-      <div class="feeder-row">
-        <div class="feeder-swatch" style="background:${fd.color};box-shadow:0 0 4px ${fd.color};"></div>
-        <div class="feeder-name">${id}</div>
-        <div class="feeder-segs">${(fd.segs||0).toLocaleString()} segs</div>
-      </div>`
-    ).join('');
-}
 
-// ══════════════════════════════════════════════════════════
-// STATUS
-// ══════════════════════════════════════════════════════════
-function renderStatus(d){
-  var cont=document.getElementById('panel-content');
-  if(!Object.keys(d).length){
-    cont.innerHTML='<div style="padding:24px;text-align:center;color:var(--muted);">Loading…</div>';
+  if(plan.error){
+    document.getElementById("plan-summary").innerHTML=`<span style="color:#f85149">❌ ${plan.error}</span>`;
     return;
   }
-  var pct=d.energized_pct||0, pc=pct>=90?'green':pct>=70?'yellow':'red';
-  var fds=d.feeders||{};
-  var affected=Object.entries(fds).filter(([,fd])=>fd.pct<100).map(([id])=>id);
 
-  cont.innerHTML=`<div class="status-section">
+  D.plan=plan; D.planDone=0;
+  renderPlan();
+}
 
-    <div class="status-block">
-      <div class="status-block-title">
-        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
-        Network Energization
+function closePlanModal(){
+  document.getElementById("plan-backdrop").classList.remove("open");
+  document.getElementById("plan-panel").classList.remove("open");
+}
+
+function renderPlan(){
+  const p=D.plan;
+  if(!p) return;
+
+  // Summary
+  const isoSteps=p.steps.filter(s=>s.action==="OPEN").length;
+  const resSteps=p.steps.filter(s=>s.action==="CLOSE").length;
+  document.getElementById("plan-summary").innerHTML=
+    `<b>${p.summary}</b>`;
+
+  // Meta chips
+  const chips=[
+    {label:`Fault feeder`,val:p.faultFeeder||"?",col:"#a78bfa"},
+    {label:`De-energized`,val:`${(p.deenergizedNodes||0).toLocaleString()} nodes`,col:"#f85149"},
+    {label:`Fault zone`,val:`${(p.faultZoneNodes||0).toLocaleString()} nodes (${p.faultZonePct||0}%)`,col:"#d29922"},
+    {label:`Restorable`,val:`${(p.totalRestorable||0).toLocaleString()} nodes`,col:"#3fb950"},
+    {label:`Isolation steps`,val:isoSteps,col:"#f97316"},
+    {label:`Restoration steps`,val:resSteps,col:"#3fb950"},
+  ];
+  document.getElementById("plan-meta").innerHTML=chips.map(c=>
+    `<span class="meta-chip" style="border-color:${c.col}44;color:${c.col}">
+      <span style="color:#768390;font-size:9px">${c.label}: </span>${c.val}
+    </span>`).join("");
+
+  // Steps
+  renderPlanSteps();
+
+  // Footer
+  document.getElementById("btn-exec-all").disabled=(p.steps.length===0||D.planDone>=p.steps.length);
+  updatePlanProgress();
+}
+
+function renderPlanSteps(){
+  const p=D.plan;
+  if(!p||!p.steps.length){
+    document.getElementById("plan-steps").innerHTML=
+      '<div style="text-align:center;color:#768390;padding:24px;font-size:12px">ไม่มีขั้นตอนที่แนะนำ</div>';
+    return;
+  }
+  document.getElementById("plan-steps").innerHTML=p.steps.map((step,i)=>{
+    const done=i<D.planDone;
+    const active=i===D.planDone;
+    const isOpen=step.action==="OPEN";
+    return `<div class="plan-step${done?" done":active?" active-step":""}" id="plan-step-${i}">
+      <div class="step-num" style="border-color:${done?"#238636":active?"#a78bfa":"#30363d"};
+           background:${done?"rgba(35,134,54,.15)":active?"rgba(139,92,246,.15)":"transparent"};
+           color:${done?"#3fb950":active?"#a78bfa":"#768390"}">
+        ${done?"✓":step.step}
       </div>
-      <div class="status-num-big accent" style="color:var(--accent)">${(d.nodes_on||0).toLocaleString()}</div>
-      <div class="status-num-sub">nodes on</div>
-      <div class="status-num-sub" style="margin-top:4px;color:var(--muted)">${(d.nodes_off||0).toLocaleString()} de-energized</div>
-    </div>
-
-    <div class="status-block">
-      <div class="status-block-title">
-        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-        Switching
-      </div>
-      <div style="display:flex;gap:24px;align-items:flex-end;">
+      <div class="step-body">
         <div>
-          <div class="status-num-big" style="color:var(--text)">${d.open_switches||0}</div>
-          <div class="status-num-sub">OPEN</div>
+          <span class="step-action action-${step.action}">${step.action}</span>
+          <span class="step-sw">${step.switchId}</span>
         </div>
-        <div>
-          <div class="status-num-big" style="color:var(--text)">${((d.total_switches||0)-(d.open_switches||0))}</div>
-          <div class="status-num-sub">CLOSED</div>
-        </div>
-        <div>
-          <div class="status-num-big" style="color:var(--text)">${d.total_switches||0}</div>
-          <div class="status-num-sub">TOTAL</div>
-        </div>
+        <div class="step-feeder">Feeder: ${step.feeder}${step.location?" · "+step.location:""}</div>
+        <div class="step-reason">${step.reason}</div>
+        ${step.nodesRestored>0
+          ?`<div class="step-restore">+${step.nodesRestored.toLocaleString()} nodes คืนไฟ</div>`:""
+        }
       </div>
-    </div>
-
-    <div class="status-block">
-      <div class="status-block-title">
-        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/></svg>
-        Active Fault
+      <div class="step-exec">
+        ${done
+          ?`<span style="color:#3fb950;font-size:12px">✓ Done</span>`
+          :`<button class="btn-sm ${isOpen?"btn-danger":"btn-success"}" 
+              onclick="executeStep(${i})" ${i!==D.planDone?"disabled":""}>
+              ${isOpen?"Open":"Close"}
+            </button>`
+        }
       </div>
-      ${d.fault_feeder
-        ? `<div class="fault-active">⚠ Feeder: ${d.fault_feeder}</div>`
-        : `<div class="fault-none">No active fault. Click <b>Place fault</b> in the toolbar to simulate one.</div>`}
-    </div>
-
-    ${affected.length ? `
-    <div class="status-block">
-      <div class="status-block-title">Affected Feeders</div>
-      <div class="affected-grid">${affected.map(id=>`<div class="affected-chip">${id}</div>`).join('')}</div>
-    </div>` : ''}
-
-  </div>`;
+    </div>`;
+  }).join("");
 }
 
-// ══════════════════════════════════════════════════════════
-// LOAD DATA
-// ══════════════════════════════════════════════════════════
-function fetchAll(){
-  fetch('/api/conductor').then(r=>{
-    if(!r.ok) throw new Error('conductor '+r.status);
-    return r.json();
-  }).then(d=>{
-    if(d.error){showBuildError(d.error);return;}
-    hideBuildError();
-    if(linesLayer) map.removeLayer(linesLayer);
-    linesLayer=L.geoJSON(d,{renderer:canvasRenderer,style:styleLines}).addTo(map);
-    if(!didFitBounds && d.features && d.features.length>0){
-      try{map.fitBounds(linesLayer.getBounds(),{padding:[20,20]});didFitBounds=true;}catch(e){}
-    }
-  }).catch(e=>showBuildError(e.message));
-
-  fetch('/api/dof').then(r=>{
-    if(!r.ok) throw new Error('dof '+r.status);
-    return r.json();
-  }).then(d=>{
-    if(d.error){showBuildError(d.error);return;}
-    allSwitches=d.features||[];
-    console.log('[DOF] features loaded:', allSwitches.length,
-      allSwitches.length>0 ? allSwitches[0] : 'empty');
-    renderSwitchLayer();
-    renderPanel();
-  }).catch(e=>{console.error('[DOF] error:',e);showBuildError(e.message);});
-
-  fetch('/api/scada').then(r=>{
-    if(!r.ok) throw new Error('scada '+r.status);
-    return r.json();
-  }).then(d=>{
-    if(d.error){showBuildError(d.error);return;}
-    scadaData=d;
-    updateTopBar(d);
-    if(currentTab==='feeders') renderFeeders(d);
-    if(currentTab==='status')  renderStatus(d);
-  }).catch(e=>showBuildError(e.message));
+function updatePlanProgress(){
+  const p=D.plan; if(!p) return;
+  const total=p.steps.length, done=D.planDone;
+  const pct=total>0?Math.round(done/total*100):0;
+  document.getElementById("plan-progress").textContent=
+    done<total?`ขั้นตอน ${done}/${total} · ${pct}% เสร็จแล้ว`:`✅ ทำครบทุกขั้นตอนแล้ว (${total}/${total})`;
+  document.getElementById("prog-fill").style.width=pct+"%";
+  document.getElementById("btn-exec-all").disabled=(done>=total);
 }
 
-function loadData(){
-  if(_buildChecked){fetchAll();return;}
-  fetch('/api/debug').then(r=>r.json()).then(dbg=>{
-    if(!dbg.build_ok){showBuildError(dbg.build_error||'build() ล้มเหลว');return;}
-    _buildChecked=true; hideBuildError(); fetchAll();
-  }).catch(()=>fetchAll());
+async function executeStep(i){
+  const p=D.plan;
+  if(!p||i!==D.planDone) return;
+  const step=p.steps[i];
+  // Disable all buttons during execution
+  document.querySelectorAll("#plan-steps button").forEach(b=>b.disabled=true);
+
+  try{
+    await post(`/switching-plan/execute/${i+1}`,{action:step.action,switchId:step.switchId});
+    D.planDone++;
+    renderPlanSteps();
+    updatePlanProgress();
+    await refreshLive();
+    // Scroll next step into view
+    const next=document.getElementById(`plan-step-${D.planDone}`);
+    if(next) next.scrollIntoView({behavior:"smooth",block:"nearest"});
+  }catch(err){
+    alert("Execute failed: "+err);
+    renderPlanSteps();
+  }
 }
 
-// ══════════════════════════════════════════════════════════
-// TOAST / ERROR
-// ══════════════════════════════════════════════════════════
-function showToast(msg,warn){
-  var t=document.getElementById('toast');
-  t.textContent=(warn?'⚠ ':'✓ ')+msg;
-  t.style.borderColor=warn?'var(--red)':'var(--green)';
-  t.classList.add('show');
-  setTimeout(()=>t.classList.remove('show'),2500);
-}
-function showBuildError(msg){
-  var el=document.getElementById('build-error');
-  el.textContent='⚠ '+(msg||'Server error');
-  el.classList.add('show');
-}
-function hideBuildError(){
-  document.getElementById('build-error').classList.remove('show');
+async function executeAll(){
+  if(!D.plan) return;
+  while(D.planDone<D.plan.steps.length){
+    await executeStep(D.planDone);
+    await new Promise(r=>setTimeout(r,600)); // short delay for visual feedback
+  }
 }
 
-// ══════════════════════════════════════════════════════════
-// INIT
-// ══════════════════════════════════════════════════════════
-switchTab('switches');
-loadData();
-setInterval(loadData,5000);
+// ─── Auto-refresh ─────────────────────────────────────────
+setInterval(refreshLive,5000);
+
+// ─── Init ─────────────────────────────────────────────────
+loadAll();
 </script>
 </body>
 </html>
