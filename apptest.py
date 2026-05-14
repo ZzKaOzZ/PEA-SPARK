@@ -1,790 +1,502 @@
-<!DOCTYPE html>
-<html lang="th">
-<head>
-<meta charset="utf-8">
-<title>SCADA · Distribution Grid</title>
-<link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
-<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Thai:wght@300;400;500;600&display=swap" rel="stylesheet">
-<style>
-:root{
-  --bg:#0b0f18; --surface:#111827; --surface2:#1a2235; --surface3:#0f1829;
-  --border:#1e2d45; --border2:#243352;
-  --text:#e2e8f0; --muted:#64748b; --muted2:#4a5568;
-  --accent:#38bdf8; --accent2:#0ea5e9;
-  --green:#22c55e; --green2:#16a34a;
-  --red:#ef4444; --red2:#dc2626;
-  --yellow:#f59e0b; --orange:#fb923c;
-  --panel-w:320px; --topbar-h:72px;
-}
-*{box-sizing:border-box;margin:0;padding:0;}
-body{background:var(--bg);color:var(--text);font-family:'IBM Plex Sans Thai',sans-serif;font-size:13px;overflow:hidden;height:100vh;}
+# PEA SPARK — apptest.py (แก้: ประเภทจาก FACILITYID ของ DOF, สถานะจาก PRESENTPOS, ฟีดเดอร์จาก psconductor FEEDERID)
+from flask import Flask, jsonify, render_template, request
+import networkx as nx
+from scipy.spatial import KDTree
+import traceback, os
+import geopandas as gpd
+from shapely.geometry import MultiLineString, LineString
 
-/* ── TOPBAR ── */
-#topbar{
-  position:fixed;top:0;left:0;right:0;height:var(--topbar-h);
-  background:var(--surface);border-bottom:1px solid var(--border);
-  display:flex;align-items:center;z-index:1000;padding:0;gap:0;overflow:visible;
-}
-#brand{
-  display:flex;align-items:center;gap:10px;
-  padding:0 16px;border-right:1px solid var(--border);
-  height:100%;min-width:260px;flex-shrink:0;
-}
-#brand-logo{height:65px;width:auto;object-fit:contain;display:block;flex-shrink:0;}
-#brand-text .title{font-weight:600;font-size:13px;letter-spacing:.3px;}
-#brand-text .sub{font-size:10px;color:var(--muted);font-family:'IBM Plex Mono',monospace;white-space:nowrap;margin-top:1px;}
+app = Flask(__name__)
 
-/* stat pills */
-.stat-pill{
-  display:flex;align-items:center;gap:10px;
-  padding:0 20px;border-right:1px solid var(--border);height:100%;
-  flex-shrink:0;
-}
-.stat-pill .pill-icon{
-  width:28px;height:28px;border-radius:6px;
-  display:flex;align-items:center;justify-content:center;
-  font-size:13px;flex-shrink:0;
-}
-.pill-icon.energized{background:rgba(34,197,94,.12);color:var(--green);}
-.pill-icon.switches {background:rgba(56,189,248,.12);color:var(--accent);}
-.pill-icon.fault    {background:rgba(239,68,68,.12);color:var(--red);}
-.stat-pill .label{font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.9px;line-height:1;}
-.stat-pill .value{font-family:'IBM Plex Mono',monospace;font-size:18px;font-weight:600;line-height:1.1;margin-top:1px;}
-.stat-pill .value.ok   {color:var(--green);}
-.stat-pill .value.warn {color:var(--yellow);}
-.stat-pill .value.error{color:var(--red);}
-.stat-pill .value.info {color:var(--accent);}
+BASE     = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR = os.path.join(BASE, "data")
 
-#topbar-actions{margin-left:auto;display:flex;align-items:center;gap:8px;padding-right:16px;}
-.btn{
-  display:inline-flex;align-items:center;gap:6px;
-  padding:7px 14px;border-radius:6px;border:1px solid var(--border);
-  background:var(--surface2);color:var(--text);
-  font-size:12px;font-family:'IBM Plex Sans Thai',sans-serif;
-  cursor:pointer;transition:all .15s;white-space:nowrap;
-}
-.btn:hover{background:var(--border);}
-.btn.icon-only{padding:7px 10px;}
-.btn.primary{background:rgba(56,189,248,.12);border-color:rgba(56,189,248,.4);color:var(--accent);}
-.btn.primary:hover{background:rgba(56,189,248,.22);}
-.btn.danger{background:rgba(239,68,68,.10);border-color:rgba(239,68,68,.4);color:var(--red);}
-.btn.danger:hover{background:rgba(239,68,68,.20);}
-.btn svg{flex-shrink:0;}
+# ── global state ───────────────────────────────────────────
+G             = nx.Graph()
+NODE_LIST     = []
+TREE          = None
+SWITCH_STATUS = {}
+SWITCH_NODES  = {}
+SWITCH_META   = {}
+FAULT_NODE    = None
+FAULT_FEEDER  = None
+FEEDER_COLORS = {}
+FEEDER_SEGS   = {}   # นับจำนวน segments ต่อ feeder
+SOURCE_NODES  = []
+BUILD_OK      = False
+BUILD_ERROR   = None
+BUILD_LOG     = []
 
-/* ── MAP ── */
-#map{position:fixed;top:var(--topbar-h);left:0;right:var(--panel-w);bottom:0;z-index:1;}
-.leaflet-container{background:#070c14;}
-.leaflet-control-zoom{border:1px solid var(--border)!important;}
-.leaflet-control-zoom a{background:var(--surface)!important;color:var(--text)!important;border-color:var(--border)!important;font-size:16px!important;line-height:26px!important;}
-.leaflet-control-zoom a:hover{background:var(--surface2)!important;}
-.leaflet-control-attribution{display:none;}
-/* keep leaflet attribution small bottom right */
+GDF_CONDUCTOR = None
+GDF_DOF       = None
+GDF_PSCB      = None
+GDF_TRANS     = None
+GDF_RECLOSER  = None
 
-/* fault cursor */
-body.fault-mode #map{cursor:crosshair!important;}
-.fault-marker{width:18px;height:18px;border:2px solid var(--red);border-radius:50%;background:rgba(239,68,68,.25);animation:pulse 1.2s ease-in-out infinite;}
-@keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(239,68,68,.55);}50%{box-shadow:0 0 0 10px rgba(239,68,68,0);}}
+COLOR_POOL = [
+    "#00e5ff","#ff1744","#00ff90","#ffd600","#ff9100",
+    "#7c4dff","#40c4ff","#69f0ae","#ff5252","#e040fb",
+    "#18ffff","#ff4081","#00bfa5","#ff6d00","#d500f9",
+]
 
-/* fault banner overlay */
-#fault-banner{
-  display:none;position:fixed;top:var(--topbar-h);left:0;right:var(--panel-w);z-index:200;
-  background:rgba(239,68,68,.85);backdrop-filter:blur(4px);
-  color:#fff;font-size:12px;font-weight:500;letter-spacing:.5px;text-align:center;
-  padding:9px 0;border-bottom:1px solid var(--red);
-}
-#fault-banner.show{display:flex;align-items:center;justify-content:center;gap:8px;}
 
-/* build error */
-#build-error{
-  display:none;position:fixed;top:var(--topbar-h);left:0;right:var(--panel-w);z-index:2000;
-  background:rgba(239,68,68,.95);color:#fff;font-size:11px;
-  font-family:'IBM Plex Mono',monospace;padding:10px 16px;
-  border-bottom:1px solid #b91c1c;white-space:pre-wrap;word-break:break-all;
-  max-height:140px;overflow-y:auto;
-}
-#build-error.show{display:block;}
+def log(msg):
+    print(msg)
+    BUILD_LOG.append(msg)
 
-/* ── RIGHT PANEL ── */
-#panel{
-  position:fixed;top:var(--topbar-h);right:0;width:var(--panel-w);bottom:0;
-  background:var(--surface);border-left:1px solid var(--border);
-  display:flex;flex-direction:column;z-index:900;
-}
-.tabs{display:flex;border-bottom:1px solid var(--border);flex-shrink:0;}
-.tab{
-  flex:1;text-align:center;padding:13px 0;cursor:pointer;
-  font-size:12px;font-weight:500;color:var(--muted);
-  border-bottom:2px solid transparent;transition:all .15s;letter-spacing:.5px;
-}
-.tab:hover{color:var(--text);}
-.tab.active{color:var(--accent);border-bottom-color:var(--accent);}
 
-/* search */
-#search-wrap{padding:10px 12px;border-bottom:1px solid var(--border);flex-shrink:0;}
-#search{
-  width:100%;background:var(--surface2);border:1px solid var(--border);
-  color:var(--text);padding:8px 10px 8px 32px;border-radius:6px;
-  font-size:12px;font-family:'IBM Plex Sans Thai',sans-serif;outline:none;
-}
-#search::placeholder{color:var(--muted);}
-#search:focus{border-color:var(--accent);}
-.search-icon{position:absolute;left:22px;top:50%;transform:translateY(-50%);color:var(--muted);font-size:13px;pointer-events:none;}
-.search-box{position:relative;}
+def read_layer(filename, default_epsg=32647):
+    path = os.path.join(DATA_DIR, filename)
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"ไม่พบ: {path}")
+    gdf = gpd.read_file(path)
+    log(f"read {filename}: {len(gdf)} rows  cols={list(gdf.columns)}")
+    if gdf.crs is None:
+        gdf = gdf.set_crs(epsg=default_epsg)
+    if gdf.crs.to_epsg() != 4326:
+        gdf = gdf.to_crs(epsg=4326)
+    return gdf
 
-#panel-content{flex:1;overflow-y:auto;}
-#panel-content::-webkit-scrollbar{width:3px;}
-#panel-content::-webkit-scrollbar-thumb{background:var(--border2);border-radius:3px;}
 
-/* ── SWITCH ROW ── */
-.sw-row{
-  display:flex;align-items:center;gap:10px;
-  padding:10px 14px;border-bottom:1px solid var(--border);
-  cursor:pointer;transition:background .12s;
-}
-.sw-row:hover{background:var(--surface2);}
-.sw-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0;}
-.sw-dot.closed{background:var(--green);box-shadow:0 0 5px var(--green);}
-.sw-dot.open  {background:var(--red);  box-shadow:0 0 5px var(--red);}
-.sw-info{flex:1;overflow:hidden;}
-.sw-id {font-family:'IBM Plex Mono',monospace;font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.sw-sub{font-size:10px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px;}
-.sw-toggle{width:36px;height:19px;border-radius:10px;position:relative;flex-shrink:0;transition:background .2s;}
-.sw-toggle.on {background:rgba(34,197,94,.3); border:1px solid var(--green);}
-.sw-toggle.off{background:rgba(239,68,68,.18);border:1px solid var(--red);}
-.sw-toggle::after{content:'';position:absolute;top:2px;width:13px;height:13px;border-radius:50%;transition:all .2s;}
-.sw-toggle.on ::after{left:20px;background:var(--green);}
-.sw-toggle.off::after{left:2px; background:var(--red);}
+def extract_lines(geom):
+    if geom is None:
+        return []
+    t = geom.geom_type
+    if t in ("LineString", "LineStringZ"):
+        return [geom]
+    if t in ("MultiLineString", "MultiLineStringZ"):
+        return list(geom.geoms)
+    if t == "GeometryCollection":
+        result = []
+        for g in geom.geoms:
+            result += extract_lines(g)
+        return result
+    return []
 
-/* ── FEEDER ROW ── */
-.feeder-all-btn{
-  display:block;width:calc(100% - 24px);margin:10px 12px 2px;
-  padding:8px 12px;border-radius:6px;border:1px solid var(--accent);
-  background:rgba(56,189,248,.08);color:var(--accent);
-  font-size:12px;font-family:'IBM Plex Sans Thai',sans-serif;
-  cursor:default;text-align:left;font-weight:500;letter-spacing:.3px;
-}
-.feeder-row{
-  display:flex;align-items:center;gap:10px;
-  padding:9px 14px;border-bottom:1px solid var(--border);
-  transition:background .12s;cursor:pointer;
-}
-.feeder-row:hover{background:var(--surface2);}
-.feeder-swatch{width:10px;height:10px;border-radius:50%;flex-shrink:0;}
-.feeder-name{font-family:'IBM Plex Mono',monospace;font-size:12px;font-weight:600;flex:1;}
-.feeder-segs{font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--muted);white-space:nowrap;}
 
-/* ── STATUS TAB ── */
-.status-section{padding:0;}
-.status-block{padding:16px 14px;border-bottom:1px solid var(--border);}
-.status-block-title{font-size:10px;text-transform:uppercase;letter-spacing:1px;color:var(--muted);margin-bottom:10px;display:flex;align-items:center;gap:6px;}
-.status-num-big{font-family:'IBM Plex Mono',monospace;font-size:28px;font-weight:600;line-height:1;}
-.status-num-sub{font-size:11px;color:var(--muted);margin-top:3px;}
-.status-kv{display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid var(--border);font-size:12px;}
-.status-kv:last-child{border-bottom:none;}
-.status-kv .k{color:var(--muted);}
-.status-kv .v{font-family:'IBM Plex Mono',monospace;font-weight:600;}
-.status-kv .v.green {color:var(--green);}
-.status-kv .v.red   {color:var(--red);}
-.status-kv .v.yellow{color:var(--yellow);}
-.status-kv .v.accent{color:var(--accent);}
+# ── ฟังก์ชันหลัก: อ่านประเภทจาก FACILITYID ──────────────────
+# รูปแบบ FACILITYID ของ DOF:
+#   PDA04S-14   → Disconnect  (ลงท้าย S-xx ไม่มี TVS/LB/RCL)
+#   PDA08S-13   → Load Break  (ดูจาก context หรือ SUBTYPE=Load Break)
+#   PDA09TVS-01 → Switch      (มี TVS ใน fid)
+#   R... หรือ psrecloser layer → Recloser
+#   pstrans layer → Transformer
+# ─────────────────────────────────────────────────────────────
+def infer_type_from_facilityid(layer_name, fid, props):
+    """
+    อ้างอิงประเภทสวิทช์จาก FACILITYID ของไฟล์ DOF เป็นหลัก
+    พร้อม fallback จาก layer name และ SUBTYPE
+    """
+    ln    = layer_name.lower()
+    fid_u = str(fid).upper().strip()
 
-/* fault status block */
-.fault-none{color:var(--muted);font-size:12px;margin-top:4px;}
-.fault-active{color:var(--red);font-size:12px;font-weight:600;margin-top:4px;}
+    # layer-level override
+    if "recloser" in ln:
+        return "Recloser"
+    if "trans" in ln:
+        return "Transformer"
 
-.affected-grid{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;}
-.affected-chip{
-  padding:4px 9px;border-radius:4px;
-  background:var(--surface2);border:1px solid var(--border2);
-  font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--text);
-}
+    # FACILITYID pattern matching (DOF)
+    # TVS = Tie-line Vacuum Switch
+    if "TVS" in fid_u:
+        return "Switch"
 
-/* ── LAYERS PANEL ── */
-#layers{
-  position:fixed;bottom:20px;left:14px;
-  background:var(--surface);border:1px solid var(--border);
-  border-radius:10px;padding:10px 14px;z-index:800;min-width:160px;
-}
-.lyr-title{font-size:9px;text-transform:uppercase;letter-spacing:1.2px;color:var(--muted);margin-bottom:8px;}
-.lyr-row{display:flex;align-items:center;gap:9px;padding:5px 0;cursor:pointer;font-size:12px;user-select:none;transition:opacity .15s;}
-.lyr-row.inactive{opacity:.3;}
+    # RCL / RC_ / starts with R → Recloser
+    if "RCL" in fid_u or fid_u.startswith("RC"):
+        return "Recloser"
 
-/* ── POPUP ── */
-.leaflet-popup-content-wrapper{
-  background:var(--surface);border:1px solid var(--border);
-  color:var(--text);border-radius:8px;
-  box-shadow:0 8px 32px rgba(0,0,0,.7);
-  font-family:'IBM Plex Sans Thai',sans-serif;font-size:12px;
-  min-width:200px;
-}
-.leaflet-popup-tip{background:var(--surface);}
-.leaflet-popup-close-button{color:var(--muted)!important;}
-.popup-id{font-family:'IBM Plex Mono',monospace;font-weight:600;font-size:13px;margin-bottom:8px;}
-.popup-row{display:flex;justify-content:space-between;gap:16px;padding:3px 0;}
-.popup-row .pk{color:var(--muted);}
-.popup-row .pv{font-weight:500;}
-.popup-btn{
-  width:100%;margin-top:10px;padding:7px;border-radius:6px;
-  border:1px solid var(--border);background:var(--surface2);
-  color:var(--text);cursor:pointer;font-size:12px;
-  font-family:'IBM Plex Sans Thai',sans-serif;transition:background .15s;
-}
-.popup-btn:hover{background:var(--border);}
-.popup-btn.open-sw {border-color:var(--red);  color:var(--red);}
-.popup-btn.close-sw{border-color:var(--green);color:var(--green);}
+    # LB / LBS → Load Break Switch
+    if "LBS" in fid_u or fid_u.endswith("LB"):
+        return "Load Break"
 
-/* ── TOAST ── */
-#toast{
-  position:fixed;bottom:80px;left:50%;
-  transform:translateX(-50%) translateY(16px);
-  background:var(--surface2);border:1px solid var(--border);
-  color:var(--text);padding:8px 18px;border-radius:20px;
-  font-size:12px;opacity:0;transition:all .2s;z-index:2000;pointer-events:none;
-}
-#toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
-</style>
-</head>
-<body>
+    # SUBTYPE column fallback
+    sub = str(props.get("SUBTYPE", "") or "").upper()
+    if "RECLOSER" in sub:
+        return "Recloser"
+    if "LOAD" in sub and "BREAK" in sub:
+        return "Load Break"
+    if "TVS" in sub or "VACUUM" in sub:
+        return "Switch"
 
-<!-- ═══════ TOPBAR ═══════ -->
-<div id="topbar">
-  <div id="brand">
-    <img id="brand-logo" src="{{ url_for('static', filename='logo.png') }}" alt="PEA SPARK"
-         onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
-    <div id="brand-fallback" style="display:none;width:36px;height:36px;border-radius:8px;background:linear-gradient(135deg,#0ea5e9,#38bdf8);align-items:center;justify-content:center;font-size:18px;box-shadow:0 0 12px rgba(56,189,248,.4);flex-shrink:0;">⚡</div>
-    <div id="brand-text">
-      <div class="title">SCADA · Distribution Grid</div>
-      <div class="sub">Provincial Electricity Authority · Live network model</div>
-    </div>
-  </div>
+    # default
+    return "Disconnect"
 
-  <!-- Energized % -->
-  <div class="stat-pill">
-    <div class="pill-icon energized">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
-    </div>
-    <div>
-      <div class="label">Energized</div>
-      <div class="value ok" id="tb-energized">--%</div>
-    </div>
-  </div>
 
-  <!-- Open Switches -->
-  <div class="stat-pill">
-    <div class="pill-icon switches">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-    </div>
-    <div>
-      <div class="label">Open Switches</div>
-      <div class="value info" id="tb-switches">-- / --</div>
-    </div>
-  </div>
+def norm_xy(x, y):
+    return (round(x, 6), round(y, 6))
 
-  <!-- Fault Feeder -->
-  <div class="stat-pill">
-    <div class="pill-icon fault">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-    </div>
-    <div>
-      <div class="label">Fault Feeder</div>
-      <div class="value ok" id="tb-fault">none</div>
-    </div>
-  </div>
 
-  <div id="topbar-actions">
-    <!-- refresh -->
-    <button class="btn icon-only" onclick="loadData()" title="Refresh">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>
-    </button>
-    <!-- place fault -->
-    <button class="btn primary" id="place-fault-btn" onclick="toggleFaultMode()">
-      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
-      Place fault
-    </button>
-    <!-- clear fault -->
-    <button class="btn danger" id="clear-fault-btn" onclick="clearFault()">
-      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-      Clear fault
-    </button>
-  </div>
-</div>
+def build():
+    global G, NODE_LIST, TREE
+    global SWITCH_STATUS, SWITCH_NODES, SWITCH_META
+    global FEEDER_COLORS, FEEDER_SEGS, SOURCE_NODES
+    global BUILD_OK, BUILD_ERROR
+    global GDF_CONDUCTOR, GDF_DOF, GDF_PSCB, GDF_TRANS, GDF_RECLOSER
 
-<!-- MAP -->
-<div id="map"></div>
-<div id="build-error"></div>
-<div id="fault-banner">
-  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-  Click anywhere on the map to place a fault
-</div>
+    BUILD_OK = False
+    BUILD_ERROR = None
 
-<!-- ═══════ RIGHT PANEL ═══════ -->
-<div id="panel">
-  <div class="tabs">
-    <div class="tab active" data-tab="switches" onclick="switchTab('switches')">Switches</div>
-    <div class="tab"        data-tab="feeders"  onclick="switchTab('feeders')">Feeders</div>
-    <div class="tab"        data-tab="status"   onclick="switchTab('status')">Status</div>
-  </div>
-  <div id="search-wrap">
-    <div class="search-box">
-      <span class="search-icon">🔍</span>
-      <input id="search" type="text" placeholder="Search switch id, feeder, location…" oninput="renderSwitches()">
-    </div>
-  </div>
-  <div id="panel-content"></div>
-</div>
+    try:
+        log("BUILD START")
 
-<!-- ═══════ LAYERS ═══════ -->
-<div id="layers">
-  <div class="lyr-title">⊞ Layers</div>
-  <div class="lyr-row active" id="lyr-switches" onclick="toggleLayer('switches')">
-    <div style="width:10px;height:10px;border-radius:50%;background:#22c55e;box-shadow:0 0 5px #22c55e;flex-shrink:0;"></div>
-    <span style="color:#22c55e;">Switches</span>
-  </div>
-  <div class="lyr-row active" id="lyr-reclosers" onclick="toggleLayer('reclosers')">
-    <div style="width:0;height:0;border-left:6px solid transparent;border-right:6px solid transparent;border-bottom:11px solid #f59e0b;flex-shrink:0;"></div>
-    <span style="color:#f59e0b;">Reclosers</span>
-  </div>
-  <div class="lyr-row active" id="lyr-transformers" onclick="toggleLayer('transformers')">
-    <div style="width:10px;height:10px;background:#facc15;border-radius:2px;flex-shrink:0;"></div>
-    <span style="color:#facc15;">Transformers</span>
-  </div>
-</div>
+        # ── 1. โหลด psconductor → สร้าง graph + FEEDER_COLORS + FEEDER_SEGS ──
+        GDF_CONDUCTOR = read_layer("psconductor.shp")
 
-<div id="toast"></div>
+        G = nx.Graph()
+        FEEDER_COLORS = {}
+        FEEDER_SEGS   = {}
 
-<script>
-// ══════════════════════════════════════════════════════════
-// MAP INIT
-// ══════════════════════════════════════════════════════════
-var map = L.map('map',{
-  zoomControl:true,
-  attributionControl:true
-}).setView([13.75,100.5],13);
+        for _, row in GDF_CONDUCTOR.iterrows():
+            geom   = row.geometry
+            # อ้างอิง feeder จาก FEEDERID ของ psconductor
+            feeder = str(row.get("FEEDERID") or row.get("FEEDER_ID") or "UNKNOWN").strip()
 
-var canvasRenderer = L.canvas({padding:0.5});
+            if feeder not in FEEDER_COLORS:
+                FEEDER_COLORS[feeder] = COLOR_POOL[len(FEEDER_COLORS) % len(COLOR_POOL)]
+                FEEDER_SEGS[feeder]   = 0
 
-L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',{maxZoom:20}).addTo(map);
+            for line in extract_lines(geom):
+                coords = list(line.coords)
+                FEEDER_SEGS[feeder] += len(coords) - 1
+                for i in range(len(coords) - 1):
+                    a = norm_xy(coords[i][0],   coords[i][1])
+                    b = norm_xy(coords[i+1][0], coords[i+1][1])
+                    G.add_edge(a, b, feeder=feeder)
 
-var linesLayer  = null;
-var switchLayer = null;
-var faultMarker = null;
-var faultMode   = false;
-var allSwitches = [];
-var currentTab  = 'switches';
-var scadaData   = {};
-var layerVis    = {switches:true,reclosers:true,transformers:true};
-var didFitBounds = false;
-var _buildChecked = false;
+        NODE_LIST = list(G.nodes())
+        TREE      = KDTree(NODE_LIST)
 
-// ══════════════════════════════════════════════════════════
-// LINE STYLE
-// ══════════════════════════════════════════════════════════
-function styleLines(f){
-  var on = f.properties.status === "on";
-  return{
-    color:   on ? f.properties.color : "#1a2840",
-    weight:  on ? 3.5 : 1.0,
-    opacity: on ? 1.0 : 0.18,
-    lineCap:'round',lineJoin:'round'
-  };
-}
+        SWITCH_NODES = {}
+        SWITCH_META  = {}
+        SOURCE_NODES = []
 
-// ══════════════════════════════════════════════════════════
-// SWITCH MARKERS  (ใช้ CircleMarker + DivIcon ผสมกัน)
-//   Disconnect  → ⬤ วงกลม  เขียว/แดง
-//   Load Break  → ■ divIcon สี่เหลี่ยม
-//   Switch(TVS) → ◆ divIcon ข้าวหลามตัด
-//   Recloser    → ▲ divIcon สามเหลี่ยม ส้ม
-//   Transformer → ■ วงกลมเหลือง
-// ══════════════════════════════════════════════════════════
-function makeSwitchMarker(f, latlng){
-  var p      = f.properties;
-  var isOpen = p.status === 0;
-  var t      = (p.type||'disconnect').toLowerCase();
-  var sc     = isOpen ? '#ef4444' : '#22c55e';
+        # ── 2. DOF → สวิทช์หลัก (FACILITYID, PRESENTPOS) ──────────
+        path = os.path.join(DATA_DIR, "DOF.shp")
+        if os.path.exists(path):
+            GDF_DOF = read_layer("DOF.shp")
+            _load_dof_layer(GDF_DOF)
 
-  if(t === 'recloser'){
-    var rc = isOpen ? '#fb923c' : '#f59e0b';
-    return L.marker(latlng,{
-      icon: L.divIcon({
-        className:'',
-        html:'<div style="width:0;height:0;border-left:7px solid transparent;border-right:7px solid transparent;border-bottom:13px solid '+rc+';"></div>',
-        iconSize:[14,13], iconAnchor:[7,13]
-      }),
-      zIndexOffset:100
-    });
-  }
+        # ── 3. psrecloser ──────────────────────────────────────────
+        path = os.path.join(DATA_DIR, "psrecloser.shp")
+        if os.path.exists(path):
+            GDF_RECLOSER = read_layer("psrecloser.shp")
+            _load_point_layer(GDF_RECLOSER, "psrecloser")
 
-  if(t === 'transformer'){
-    return L.circleMarker(latlng,{
-      radius:5, color:'#facc15', fillColor:'#facc15',
-      fillOpacity:1, weight:1.5, opacity:0.9
-    });
-  }
+        # ── 4. pstrans ─────────────────────────────────────────────
+        path = os.path.join(DATA_DIR, "pstrans.shp")
+        if os.path.exists(path):
+            GDF_TRANS = read_layer("pstrans.shp")
+            _load_point_layer(GDF_TRANS, "pstrans")
 
-  if(t === 'load break'){
-    return L.marker(latlng,{
-      icon: L.divIcon({
-        className:'',
-        html:'<div style="width:10px;height:10px;background:'+sc+';border:1.5px solid rgba(255,255,255,.4);box-shadow:0 0 5px '+sc+';"></div>',
-        iconSize:[10,10], iconAnchor:[5,5]
-      })
-    });
-  }
+        # ── 5. pscb → source nodes (substation) ───────────────────
+        path = os.path.join(DATA_DIR, "pscb.shp")
+        if os.path.exists(path):
+            GDF_PSCB = read_layer("pscb.shp")
+            for _, row in GDF_PSCB.iterrows():
+                geom = row.geometry
+                if geom and geom.geom_type == "Point":
+                    _, idx = TREE.query([geom.x, geom.y])
+                    nearest = (round(NODE_LIST[idx][0], 6), round(NODE_LIST[idx][1], 6))
+                    SOURCE_NODES.append(nearest)
 
-  if(t === 'switch'){
-    return L.marker(latlng,{
-      icon: L.divIcon({
-        className:'',
-        html:'<div style="width:9px;height:9px;background:'+sc+';border:1.5px solid rgba(255,255,255,.35);transform:rotate(45deg);"></div>',
-        iconSize:[11,11], iconAnchor:[5,5]
-      })
-    });
-  }
+        BUILD_OK = True
+        log(f"nodes={G.number_of_nodes()} edges={G.number_of_edges()} switches={len(SWITCH_NODES)}")
 
-  // Disconnect default → circleMarker (most reliable)
-  return L.circleMarker(latlng,{
-    radius:5,
-    color: isOpen ? '#ef4444' : '#22c55e',
-    fillColor: isOpen ? '#ef4444' : '#22c55e',
-    fillOpacity:1, weight:2, opacity:0.9
-  });
-}
+    except Exception:
+        BUILD_ERROR = traceback.format_exc()
+        log(BUILD_ERROR)
 
-// ══════════════════════════════════════════════════════════
-// POPUP
-// ══════════════════════════════════════════════════════════
-function showSwitchPopup(f, layer){
-  var p = f.properties, isOpen = p.status===0;
-  layer.bindPopup(`
-    <div class="popup-id">${p.id}</div>
-    <div class="popup-row"><span class="pk">Feeder</span><span class="pv">${p.feeder||'-'}</span></div>
-    <div class="popup-row"><span class="pk">Type</span><span class="pv">${p.type||'Disconnect'}</span></div>
-    <div class="popup-row"><span class="pk">Location</span><span class="pv">${p.location||'-'}</span></div>
-    <div class="popup-row"><span class="pk">State</span>
-      <span class="pv" style="color:${isOpen?'#ef4444':'#22c55e'}">${isOpen?'OPEN':'CLOSE'}</span>
-    </div>
-    <button class="popup-btn ${isOpen?'close-sw':'open-sw'}" onclick="toggleSwitch('${p.id}')">
-      ${isOpen?'⊕ Close switch':'⊖ Open switch'}
-    </button>
-  `,{maxWidth:240}).openPopup();
-}
 
-function toggleSwitch(id){
-  fetch('/toggle_switch?id='+id).then(()=>{loadData();showToast('Toggled: '+id);});
-}
+def _load_dof_layer(gdf):
+    """
+    โหลด DOF.shp โดยอ้างอิง:
+      - FACILITYID  → ชื่อ/ID ของสวิทช์ + infer type
+      - PRESENTPOS  → สถานะ (1=CLOSE, 0=OPEN)
+      - FEEDERID ของ psconductor (ผ่าน graph) → feeder
+    """
+    count = 0
+    for _, row in gdf.iterrows():
+        geom = row.geometry
+        if geom is None or geom.geom_type != "Point":
+            continue
 
-// ══════════════════════════════════════════════════════════
-// RENDER SWITCH LAYER
-// ══════════════════════════════════════════════════════════
-function renderSwitchLayer(){
-  if(switchLayer){ map.removeLayer(switchLayer); switchLayer=null; }
-  var visible = allSwitches.filter(f=>{
-    var t = (f.properties.type||'').toLowerCase();
-    if(t==='recloser')    return layerVis.reclosers;
-    if(t==='transformer') return layerVis.transformers;
-    return layerVis.switches;
-  });
-  console.log('[SWITCH] rendering', visible.length, 'markers');
-  if(!visible.length) return;
-  try{
-    switchLayer = L.geoJSON({type:'FeatureCollection',features:visible},{
-      pointToLayer: function(f,latlng){
-        try{ return makeSwitchMarker(f,latlng); }
-        catch(e){
-          console.warn('[SWITCH] marker error',e,f.properties);
-          return L.circleMarker(latlng,{radius:5,color:'#22c55e',fillOpacity:1});
+        fid = str(row.get("FACILITYID") or row.get("DEVICEID") or row.get("NAME") or row.get("FID") or "").strip()
+        if not fid:
+            continue
+
+        _, idx   = TREE.query([geom.x, geom.y])
+        nearest  = (round(NODE_LIST[idx][0], 6), round(NODE_LIST[idx][1], 6))
+
+        # feeder จาก graph edge ที่ใกล้ที่สุด (psconductor FEEDERID)
+        feeder = ""
+        for _u, _v, _d in G.edges(nearest, data=True):
+            feeder = _d.get("feeder", "UNKNOWN")
+            break
+        if not feeder:
+            feeder = "UNKNOWN"
+
+        location = str(row.get("LOCATION") or row.get("STREETNAME") or row.get("SUBSTATION") or "").strip()
+
+        # ── ประเภทสวิทช์จาก FACILITYID ──
+        sw_type = infer_type_from_facilityid("DOF", fid, dict(row))
+
+        SWITCH_NODES[fid] = nearest
+        SWITCH_META[fid]  = {
+            "type":     sw_type,
+            "feeder":   feeder,
+            "location": location,
         }
-      },
-      onEachFeature: function(f,layer){
-        layer.on('click',function(e){ L.DomEvent.stopPropagation(e); showSwitchPopup(f,layer); });
-      }
-    }).addTo(map);
-    console.log('[SWITCH] layer added ok, bounds:', switchLayer.getBounds());
-  }catch(e){ console.error('[SWITCH] geoJSON error:',e); }
-}
 
-// ══════════════════════════════════════════════════════════
-// LAYER TOGGLE
-// ══════════════════════════════════════════════════════════
-function toggleLayer(name){
-  layerVis[name] = !layerVis[name];
-  document.getElementById('lyr-'+name).classList.toggle('inactive',!layerVis[name]);
-  renderSwitchLayer();
-}
+        # ── สถานะจาก PRESENTPOS ──
+        # PRESENTPOS: 1 = CLOSE (ปิด/จ่ายไฟ), 0 = OPEN (เปิด/ตัดวงจร)
+        if fid not in SWITCH_STATUS:
+            try:
+                pos = int(row.get("PRESENTPOS") or 1)
+            except (ValueError, TypeError):
+                pos = 1
+            SWITCH_STATUS[fid] = pos
 
-// ══════════════════════════════════════════════════════════
-// FAULT MODE
-// ══════════════════════════════════════════════════════════
-function toggleFaultMode(){
-  faultMode = !faultMode;
-  document.body.classList.toggle('fault-mode',faultMode);
-  var btn = document.getElementById('place-fault-btn');
-  document.getElementById('fault-banner').classList.toggle('show',faultMode);
-  if(faultMode){
-    btn.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg> Cancel`;
-    btn.className = 'btn danger';
-  } else {
-    btn.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg> Place fault`;
-    btn.className = 'btn primary';
-  }
-}
+        count += 1
+    log(f"loaded DOF: {count}")
 
-function clearFault(){
-  fetch('/clear_fault').then(()=>{
-    if(faultMarker){map.removeLayer(faultMarker);faultMarker=null;}
-    faultMode=false;
-    document.body.classList.remove('fault-mode');
-    document.getElementById('fault-banner').classList.remove('show');
-    var btn=document.getElementById('place-fault-btn');
-    btn.innerHTML=`<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg> Place fault`;
-    btn.className='btn primary';
-    loadData(); showToast('Fault cleared');
-  });
-}
 
-map.on('click',function(e){
-  if(!faultMode) return;
-  fetch('/fault?lat='+e.latlng.lat+'&lon='+e.latlng.lng).then(r=>r.json()).then(d=>{
-    if(faultMarker) map.removeLayer(faultMarker);
-    faultMarker=L.marker([e.latlng.lat,e.latlng.lng],{
-      icon:L.divIcon({className:'',html:'<div class="fault-marker"></div>',iconSize:[18,18],iconAnchor:[9,9]}),
-      zIndexOffset:1000
-    }).addTo(map).bindPopup(`<b>⚠ Fault</b><br>Feeder: ${d.feeder}`).openPopup();
-    faultMode=false;
-    document.body.classList.remove('fault-mode');
-    document.getElementById('fault-banner').classList.remove('show');
-    var btn=document.getElementById('place-fault-btn');
-    btn.innerHTML=`<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg> Place fault`;
-    btn.className='btn primary';
-    loadData(); showToast('Fault: feeder '+d.feeder,true);
-  });
-});
+def _load_point_layer(gdf, layer_name):
+    """โหลด psrecloser / pstrans (ไม่มี PRESENTPOS — ถือว่า CLOSE เสมอ)"""
+    count = 0
+    for _, row in gdf.iterrows():
+        geom = row.geometry
+        if geom is None or geom.geom_type != "Point":
+            continue
 
-// ══════════════════════════════════════════════════════════
-// TOP BAR UPDATE
-// ══════════════════════════════════════════════════════════
-function updateTopBar(d){
-  var pct=d.energized_pct||0;
-  var el=document.getElementById('tb-energized');
-  el.textContent=pct+'%';
-  el.className='value '+(pct>=90?'ok':pct>=70?'warn':'error');
-  document.getElementById('tb-switches').textContent=(d.open_switches||0)+' / '+(d.total_switches||0);
-  var fEl=document.getElementById('tb-fault');
-  fEl.textContent=d.fault_feeder||'none';
-  fEl.className='value '+(d.fault_feeder?'error':'ok');
-}
+        fid = str(row.get("FACILITYID") or row.get("DEVICEID") or row.get("NAME") or row.get("FID") or "").strip()
+        if not fid or fid in SWITCH_NODES:
+            continue
 
-// ══════════════════════════════════════════════════════════
-// TABS
-// ══════════════════════════════════════════════════════════
-function switchTab(name){
-  currentTab=name;
-  document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('active',t.dataset.tab===name));
-  document.getElementById('search-wrap').style.display=name==='switches'?'':'none';
-  renderPanel();
-}
-function renderPanel(){
-  if(currentTab==='switches') renderSwitches();
-  if(currentTab==='feeders')  renderFeeders(scadaData);
-  if(currentTab==='status')   renderStatus(scadaData);
-}
+        _, idx  = TREE.query([geom.x, geom.y])
+        nearest = (round(NODE_LIST[idx][0], 6), round(NODE_LIST[idx][1], 6))
 
-// ══════════════════════════════════════════════════════════
-// SWITCH LIST
-// ══════════════════════════════════════════════════════════
-function renderSwitches(){
-  var q    = (document.getElementById('search').value||'').toLowerCase();
-  var cont = document.getElementById('panel-content');
-  var items = allSwitches.filter(f=>{
-    var p=f.properties;
-    return !q||
-      (p.id||'').toLowerCase().includes(q)||
-      (p.feeder||'').toLowerCase().includes(q)||
-      (p.location||'').toLowerCase().includes(q)||
-      (p.type||'').toLowerCase().includes(q);
-  });
-  if(!items.length){
-    cont.innerHTML='<div style="padding:24px;text-align:center;color:var(--muted);">ไม่พบข้อมูล</div>';
-    return;
-  }
-  cont.innerHTML=items.map(f=>{
-    var p=f.properties, isOpen=p.status===0;
-    return `<div class="sw-row" onclick="flyTo(${JSON.stringify(f.geometry.coordinates)},'${p.id}')">
-      <div class="sw-dot ${isOpen?'open':'closed'}"></div>
-      <div class="sw-info">
-        <div class="sw-id">${p.id}</div>
-        <div class="sw-sub">${p.feeder||'UNK'} · ${p.type||'Disconnect'} · ${p.location||'-'}</div>
-      </div>
-      <div class="sw-toggle ${isOpen?'off':'on'}"></div>
-    </div>`;
-  }).join('');
-}
-function flyTo(coords,id){ map.flyTo([coords[1],coords[0]],16,{duration:0.7}); }
+        feeder = ""
+        for _u, _v, _d in G.edges(nearest, data=True):
+            feeder = _d.get("feeder", "UNKNOWN")
+            break
+        if not feeder:
+            feeder = "UNKNOWN"
 
-// ══════════════════════════════════════════════════════════
-// FEEDERS LIST  (แสดง segs ตามรูปตัวอย่าง)
-// ══════════════════════════════════════════════════════════
-function renderFeeders(d){
-  var cont=document.getElementById('panel-content');
-  var fds=d.feeders||{};
-  if(!Object.keys(fds).length){
-    cont.innerHTML='<div style="padding:24px;text-align:center;color:var(--muted);">Loading…</div>';
-    return;
-  }
-  // เรียงตาม segs จากมากไปน้อย (ตามรูปตัวอย่าง)
-  var sorted = Object.entries(fds).sort((a,b)=>(b[1].segs||0)-(a[1].segs||0));
-  cont.innerHTML =
-    '<div class="feeder-all-btn">All feeders</div>' +
-    sorted.map(([id,fd])=>`
-      <div class="feeder-row">
-        <div class="feeder-swatch" style="background:${fd.color};box-shadow:0 0 4px ${fd.color};"></div>
-        <div class="feeder-name">${id}</div>
-        <div class="feeder-segs">${(fd.segs||0).toLocaleString()} segs</div>
-      </div>`
-    ).join('');
-}
+        location = str(row.get("LOCATION") or row.get("STREETNAME") or row.get("SUBSTATION") or "").strip()
+        sw_type  = infer_type_from_facilityid(layer_name, fid, dict(row))
 
-// ══════════════════════════════════════════════════════════
-// STATUS
-// ══════════════════════════════════════════════════════════
-function renderStatus(d){
-  var cont=document.getElementById('panel-content');
-  if(!Object.keys(d).length){
-    cont.innerHTML='<div style="padding:24px;text-align:center;color:var(--muted);">Loading…</div>';
-    return;
-  }
-  var pct=d.energized_pct||0, pc=pct>=90?'green':pct>=70?'yellow':'red';
-  var fds=d.feeders||{};
-  var affected=Object.entries(fds).filter(([,fd])=>fd.pct<100).map(([id])=>id);
+        SWITCH_NODES[fid] = nearest
+        SWITCH_META[fid]  = {"type": sw_type, "feeder": feeder, "location": location}
 
-  cont.innerHTML=`<div class="status-section">
+        if fid not in SWITCH_STATUS:
+            try:
+                pos = int(row.get("PRESENTPOS") or 1)
+            except (ValueError, TypeError):
+                pos = 1
+            SWITCH_STATUS[fid] = pos
 
-    <div class="status-block">
-      <div class="status-block-title">
-        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
-        Network Energization
-      </div>
-      <div class="status-num-big accent" style="color:var(--accent)">${(d.nodes_on||0).toLocaleString()}</div>
-      <div class="status-num-sub">nodes on</div>
-      <div class="status-num-sub" style="margin-top:4px;color:var(--muted)">${(d.nodes_off||0).toLocaleString()} de-energized</div>
-    </div>
+        count += 1
+    log(f"loaded {layer_name}: {count}")
 
-    <div class="status-block">
-      <div class="status-block-title">
-        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-        Switching
-      </div>
-      <div style="display:flex;gap:24px;align-items:flex-end;">
-        <div>
-          <div class="status-num-big" style="color:var(--text)">${d.open_switches||0}</div>
-          <div class="status-num-sub">OPEN</div>
-        </div>
-        <div>
-          <div class="status-num-big" style="color:var(--text)">${((d.total_switches||0)-(d.open_switches||0))}</div>
-          <div class="status-num-sub">CLOSED</div>
-        </div>
-        <div>
-          <div class="status-num-big" style="color:var(--text)">${d.total_switches||0}</div>
-          <div class="status-num-sub">TOTAL</div>
-        </div>
-      </div>
-    </div>
 
-    <div class="status-block">
-      <div class="status-block-title">
-        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/></svg>
-        Active Fault
-      </div>
-      ${d.fault_feeder
-        ? `<div class="fault-active">⚠ Feeder: ${d.fault_feeder}</div>`
-        : `<div class="fault-none">No active fault. Click <b>Place fault</b> in the toolbar to simulate one.</div>`}
-    </div>
+# ── Energization ────────────────────────────────────────────
+def get_energized():
+    G2 = G.copy()
+    if FAULT_NODE and FAULT_NODE in G2:
+        G2.remove_node(FAULT_NODE)
+    for fid, node in SWITCH_NODES.items():
+        if SWITCH_STATUS.get(fid, 1) == 0 and node in G2:
+            G2.remove_node(node)
+    energized = set()
+    if SOURCE_NODES:
+        stack = [n for n in SOURCE_NODES if n in G2]
+        while stack:
+            n = stack.pop()
+            if n in energized:
+                continue
+            energized.add(n)
+            for nb in G2.neighbors(n):
+                if nb not in energized:
+                    stack.append(nb)
+    else:
+        for comp in nx.connected_components(G2):
+            energized |= comp
+    return energized
 
-    ${affected.length ? `
-    <div class="status-block">
-      <div class="status-block-title">Affected Feeders</div>
-      <div class="affected-grid">${affected.map(id=>`<div class="affected-chip">${id}</div>`).join('')}</div>
-    </div>` : ''}
 
-  </div>`;
-}
+# ── Routes ──────────────────────────────────────────────────
+@app.route("/")
+def home():
+    return render_template("indexpro.html")
 
-// ══════════════════════════════════════════════════════════
-// LOAD DATA
-// ══════════════════════════════════════════════════════════
-function fetchAll(){
-  fetch('/api/conductor').then(r=>{
-    if(!r.ok) throw new Error('conductor '+r.status);
-    return r.json();
-  }).then(d=>{
-    if(d.error){showBuildError(d.error);return;}
-    hideBuildError();
-    if(linesLayer) map.removeLayer(linesLayer);
-    linesLayer=L.geoJSON(d,{renderer:canvasRenderer,style:styleLines}).addTo(map);
-    if(!didFitBounds && d.features && d.features.length>0){
-      try{map.fitBounds(linesLayer.getBounds(),{padding:[20,20]});didFitBounds=true;}catch(e){}
-    }
-  }).catch(e=>showBuildError(e.message));
 
-  fetch('/api/dof').then(r=>{
-    if(!r.ok) throw new Error('dof '+r.status);
-    return r.json();
-  }).then(d=>{
-    if(d.error){showBuildError(d.error);return;}
-    allSwitches=d.features||[];
-    console.log('[DOF] features loaded:', allSwitches.length,
-      allSwitches.length>0 ? allSwitches[0] : 'empty');
-    renderSwitchLayer();
-    renderPanel();
-  }).catch(e=>{console.error('[DOF] error:',e);showBuildError(e.message);});
+@app.route("/api/debug")
+def api_debug():
+    return jsonify({
+        "build_ok":    BUILD_OK,
+        "build_error": BUILD_ERROR,
+        "nodes":       len(NODE_LIST),
+        "edges":       G.number_of_edges(),
+        "switches":    len(SWITCH_NODES),
+        "sources":     len(SOURCE_NODES),
+    })
 
-  fetch('/api/scada').then(r=>{
-    if(!r.ok) throw new Error('scada '+r.status);
-    return r.json();
-  }).then(d=>{
-    if(d.error){showBuildError(d.error);return;}
-    scadaData=d;
-    updateTopBar(d);
-    if(currentTab==='feeders') renderFeeders(d);
-    if(currentTab==='status')  renderStatus(d);
-  }).catch(e=>showBuildError(e.message));
-}
 
-function loadData(){
-  if(_buildChecked){fetchAll();return;}
-  fetch('/api/debug').then(r=>r.json()).then(dbg=>{
-    if(!dbg.build_ok){showBuildError(dbg.build_error||'build() ล้มเหลว');return;}
-    _buildChecked=true; hideBuildError(); fetchAll();
-  }).catch(()=>fetchAll());
-}
+@app.route("/api/debug_counts")
+def debug_counts():
+    return jsonify({
+        "conductors":   len(GDF_CONDUCTOR) if GDF_CONDUCTOR is not None else 0,
+        "dof":          len(GDF_DOF)       if GDF_DOF       is not None else 0,
+        "recloser":     len(GDF_RECLOSER)  if GDF_RECLOSER  is not None else 0,
+        "transformer":  len(GDF_TRANS)     if GDF_TRANS     is not None else 0,
+        "pscb":         len(GDF_PSCB)      if GDF_PSCB      is not None else 0,
+        "switch_nodes": len(SWITCH_NODES),
+        "graph_nodes":  G.number_of_nodes(),
+        "graph_edges":  G.number_of_edges(),
+    })
 
-// ══════════════════════════════════════════════════════════
-// TOAST / ERROR
-// ══════════════════════════════════════════════════════════
-function showToast(msg,warn){
-  var t=document.getElementById('toast');
-  t.textContent=(warn?'⚠ ':'✓ ')+msg;
-  t.style.borderColor=warn?'var(--red)':'var(--green)';
-  t.classList.add('show');
-  setTimeout(()=>t.classList.remove('show'),2500);
-}
-function showBuildError(msg){
-  var el=document.getElementById('build-error');
-  el.textContent='⚠ '+(msg||'Server error');
-  el.classList.add('show');
-}
-function hideBuildError(){
-  document.getElementById('build-error').classList.remove('show');
-}
 
-// ══════════════════════════════════════════════════════════
-// INIT
-// ══════════════════════════════════════════════════════════
-switchTab('switches');
-loadData();
-setInterval(loadData,5000);
-</script>
-</body>
-</html>
+@app.route("/api/conductor")
+def api_conductor():
+    energized = get_energized()
+    features  = []
+    for _, row in GDF_CONDUCTOR.iterrows():
+        geom   = row.geometry
+        feeder = str(row.get("FEEDERID") or row.get("FEEDER_ID") or "UNKNOWN").strip()
+        color  = FEEDER_COLORS.get(feeder, "#888")
+        for line in extract_lines(geom):
+            coords   = [[c[0], c[1]] for c in line.coords]
+            edge_on  = False
+            for i in range(len(coords) - 1):
+                a = norm_xy(coords[i][0],   coords[i][1])
+                b = norm_xy(coords[i+1][0], coords[i+1][1])
+                if a in energized or b in energized:
+                    edge_on = True
+                    break
+            features.append({
+                "type": "Feature",
+                "geometry": {"type": "LineString", "coordinates": coords},
+                "properties": {
+                    "feeder": feeder,
+                    "color":  color,
+                    "status": "on" if edge_on else "off",
+                }
+            })
+    return jsonify({"type": "FeatureCollection", "features": features})
+
+
+@app.route("/api/dof")
+def api_dof():
+    """
+    ใช้ SWITCH_NODES เป็น source of truth ของพิกัด
+    (guaranteed EPSG:4326 และ snap กับ graph แล้ว)
+    """
+    features = []
+    for fid, node in SWITCH_NODES.items():
+        lon, lat = node  # node = (lon, lat) in 4326
+        meta   = SWITCH_META.get(fid, {})
+        status = SWITCH_STATUS.get(fid, 1)
+        features.append({
+            "type": "Feature",
+            "geometry": {"type": "Point", "coordinates": [lon, lat]},
+            "properties": {
+                "id":       fid,
+                "state":    "CLOSE" if status == 1 else "OPEN",
+                "status":   status,
+                "type":     meta.get("type",     "Disconnect"),
+                "feeder":   meta.get("feeder",   "UNKNOWN"),
+                "location": meta.get("location", ""),
+            }
+        })
+    return jsonify({"type": "FeatureCollection", "features": features})
+
+
+@app.route("/api/dof_debug")
+def api_dof_debug():
+    """Debug: ตรวจสอบว่า switch nodes มีข้อมูลถูกต้องไหม"""
+    sample = []
+    for fid, node in list(SWITCH_NODES.items())[:5]:
+        meta = SWITCH_META.get(fid, {})
+        sample.append({
+            "fid": fid,
+            "node": node,
+            "type": meta.get("type"),
+            "feeder": meta.get("feeder"),
+            "status": SWITCH_STATUS.get(fid),
+        })
+    return jsonify({
+        "total_switches": len(SWITCH_NODES),
+        "sample": sample,
+    })
+
+
+@app.route("/toggle_switch")
+def toggle_switch():
+    fid = request.args.get("id")
+    if fid in SWITCH_STATUS:
+        SWITCH_STATUS[fid] = 1 - SWITCH_STATUS[fid]
+    return jsonify({"ok": True})
+
+
+@app.route("/fault")
+def fault():
+    global FAULT_NODE, FAULT_FEEDER
+    lat = float(request.args.get("lat"))
+    lon = float(request.args.get("lon"))
+    _, idx       = TREE.query([lon, lat])
+    FAULT_NODE   = NODE_LIST[idx]
+    FAULT_FEEDER = "UNKNOWN"
+    for nb in G.neighbors(FAULT_NODE):
+        FAULT_FEEDER = G[FAULT_NODE][nb].get("feeder", "UNKNOWN")
+        break
+    return jsonify({"ok": True, "feeder": FAULT_FEEDER})
+
+
+@app.route("/clear_fault")
+def clear_fault():
+    global FAULT_NODE, FAULT_FEEDER
+    FAULT_NODE   = None
+    FAULT_FEEDER = None
+    return jsonify({"ok": True})
+
+
+@app.route("/api/scada")
+def api_scada():
+    energized    = get_energized()
+    total_nodes  = len(NODE_LIST)
+    nodes_on     = len(energized)
+    nodes_off    = total_nodes - nodes_on
+    pct          = round((nodes_on / total_nodes) * 100, 1) if total_nodes else 0
+    open_switches = sum(1 for v in SWITCH_STATUS.values() if v == 0)
+
+    feeders = {}
+    for feeder, color in FEEDER_COLORS.items():
+        total = 0
+        on    = 0
+        for u, v, d in G.edges(data=True):
+            if d.get("feeder") != feeder:
+                continue
+            total += 1
+            if u in energized or v in energized:
+                on += 1
+        fpct = round((on / total) * 100) if total else 0
+        feeders[feeder] = {
+            "color": color,
+            "pct":   fpct,
+            "segs":  FEEDER_SEGS.get(feeder, total),   # ← จำนวน segments
+        }
+
+    return jsonify({
+        "nodes_on":       nodes_on,
+        "nodes_off":      nodes_off,
+        "energized_pct":  pct,
+        "open_switches":  open_switches,
+        "total_switches": len(SWITCH_STATUS),
+        "fault_feeder":   FAULT_FEEDER,
+        "feeders":        feeders,
+    })
+
+
+if __name__ == "__main__":
+    build()
+    app.run(host="0.0.0.0", port=5000, debug=False)
