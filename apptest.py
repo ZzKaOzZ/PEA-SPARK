@@ -1,502 +1,670 @@
-# PEA SPARK — apptest.py (แก้: ประเภทจาก FACILITYID ของ DOF, สถานะจาก PRESENTPOS, ฟีดเดอร์จาก psconductor FEEDERID)
-from flask import Flask, jsonify, render_template, request
-import networkx as nx
-from scipy.spatial import KDTree
-import traceback, os
-import geopandas as gpd
-from shapely.geometry import MultiLineString, LineString
+from __future__ import annotations
+import json
+import math
+import os
+from collections import deque
+from flask import Flask, jsonify, request, abort
 
-app = Flask(__name__)
+try:
+    from pyproj import Transformer
+    _TRANSFORMER     = Transformer.from_crs("EPSG:24047", "EPSG:4326", always_xy=True)
+    _TRANSFORMER_INV = Transformer.from_crs("EPSG:4326", "EPSG:24047", always_xy=True)
+    def to_wgs(x: float, y: float) -> tuple[float, float]:
+        lon, lat = _TRANSFORMER.transform(x, y)
+        return lon, lat
+    def to_utm(lon: float, lat: float) -> tuple[float, float]:
+        x, y = _TRANSFORMER_INV.transform(lon, lat)
+        return x, y
+except ImportError:
+    raise SystemExit("กรุณาติดตั้ง pyproj: pip install pyproj")
 
-BASE     = os.path.dirname(os.path.abspath(__file__))
-DATA_DIR = os.path.join(BASE, "data")
+# ─── Paths ────────────────────────────────────────────────────────────────────
+_HERE    = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR = os.path.join(_HERE, "templates")
 
-# ── global state ───────────────────────────────────────────
-G             = nx.Graph()
-NODE_LIST     = []
-TREE          = None
-SWITCH_STATUS = {}
-SWITCH_NODES  = {}
-SWITCH_META   = {}
-FAULT_NODE    = None
-FAULT_FEEDER  = None
-FEEDER_COLORS = {}
-FEEDER_SEGS   = {}   # นับจำนวน segments ต่อ feeder
-SOURCE_NODES  = []
-BUILD_OK      = False
-BUILD_ERROR   = None
-BUILD_LOG     = []
-
-GDF_CONDUCTOR = None
-GDF_DOF       = None
-GDF_PSCB      = None
-GDF_TRANS     = None
-GDF_RECLOSER  = None
-
-COLOR_POOL = [
-    "#00e5ff","#ff1744","#00ff90","#ffd600","#ff9100",
-    "#7c4dff","#40c4ff","#69f0ae","#ff5252","#e040fb",
-    "#18ffff","#ff4081","#00bfa5","#ff6d00","#d500f9",
+FEEDER_PALETTE = [
+    "#00e5ff","#7c4dff","#ff9100","#00e676","#ff5252","#ffd600",
+    "#40c4ff","#b388ff","#ff6e40","#69f0ae","#f06292","#ffab40",
 ]
 
+# ─── Network State ────────────────────────────────────────────────────────────
+class NetworkState:
+    def __init__(self):
+        self.adjacency:    dict[str, set[str]] = {}
+        self.node_feeder:  dict[str, str]       = {}
+        self.node_xy:      dict[str, tuple[float, float]] = {}
+        self.nodes:        list[tuple[str, float, float]] = []
 
-def log(msg):
-    print(msg)
-    BUILD_LOG.append(msg)
+        self.conductor_keys: list[list[str]] = []
+        self.conductor_wgs:  list[dict]      = []
+
+        self.switches:     list[dict]        = []
+        self.switch_node:  dict[str, str]    = {}
+        self.switch_status:dict[str, int]    = {}   # 1=closed 0=open
+
+        self.substations:  list[dict]        = []
+        self.cb_node:      dict[str, str]    = {}
+        self.cb_feeder:    dict[str, str]    = {}
+        self.cb_status:    dict[str, int]    = {}
+        self.feeder_cbs:   dict[str, set[str]] = {}
+
+        self.reclosers:    list[dict]        = []
+        self.transformers: list[dict]        = []
+
+        self.feeder_color:      dict[str, str] = {}
+        self.feeder_edge_count: dict[str, int] = {}
+
+        self.fault_node:   str | None   = None
+        self.fault_feeder: str | None   = None
+        self.fault_lat:    float | None = None
+        self.fault_lon:    float | None = None
+
+_STATE: NetworkState | None = None
 
 
-def read_layer(filename, default_epsg=32647):
+def load_json(filename: str) -> dict:
     path = os.path.join(DATA_DIR, filename)
     if not os.path.exists(path):
-        raise FileNotFoundError(f"ไม่พบ: {path}")
-    gdf = gpd.read_file(path)
-    log(f"read {filename}: {len(gdf)} rows  cols={list(gdf.columns)}")
-    if gdf.crs is None:
-        gdf = gdf.set_crs(epsg=default_epsg)
-    if gdf.crs.to_epsg() != 4326:
-        gdf = gdf.to_crs(epsg=4326)
-    return gdf
+        raise FileNotFoundError(f"ไม่พบไฟล์ข้อมูล: {path}")
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)
 
 
-def extract_lines(geom):
-    if geom is None:
-        return []
-    t = geom.geom_type
-    if t in ("LineString", "LineStringZ"):
-        return [geom]
-    if t in ("MultiLineString", "MultiLineStringZ"):
-        return list(geom.geoms)
-    if t == "GeometryCollection":
-        result = []
-        for g in geom.geoms:
-            result += extract_lines(g)
-        return result
-    return []
+def node_key(x: float, y: float) -> str:
+    return f"{round(x * 1e4) / 1e4}|{round(y * 1e4) / 1e4}"
 
 
-# ── ฟังก์ชันหลัก: อ่านประเภทจาก FACILITYID ──────────────────
-# รูปแบบ FACILITYID ของ DOF:
-#   PDA04S-14   → Disconnect  (ลงท้าย S-xx ไม่มี TVS/LB/RCL)
-#   PDA08S-13   → Load Break  (ดูจาก context หรือ SUBTYPE=Load Break)
-#   PDA09TVS-01 → Switch      (มี TVS ใน fid)
-#   R... หรือ psrecloser layer → Recloser
-#   pstrans layer → Transformer
-# ─────────────────────────────────────────────────────────────
-def infer_type_from_facilityid(layer_name, fid, props):
-    """
-    อ้างอิงประเภทสวิทช์จาก FACILITYID ของไฟล์ DOF เป็นหลัก
-    พร้อม fallback จาก layer name และ SUBTYPE
-    """
-    ln    = layer_name.lower()
-    fid_u = str(fid).upper().strip()
-
-    # layer-level override
-    if "recloser" in ln:
-        return "Recloser"
-    if "trans" in ln:
-        return "Transformer"
-
-    # FACILITYID pattern matching (DOF)
-    # TVS = Tie-line Vacuum Switch
-    if "TVS" in fid_u:
-        return "Switch"
-
-    # RCL / RC_ / starts with R → Recloser
-    if "RCL" in fid_u or fid_u.startswith("RC"):
-        return "Recloser"
-
-    # LB / LBS → Load Break Switch
-    if "LBS" in fid_u or fid_u.endswith("LB"):
-        return "Load Break"
-
-    # SUBTYPE column fallback
-    sub = str(props.get("SUBTYPE", "") or "").upper()
-    if "RECLOSER" in sub:
-        return "Recloser"
-    if "LOAD" in sub and "BREAK" in sub:
-        return "Load Break"
-    if "TVS" in sub or "VACUUM" in sub:
-        return "Switch"
-
-    # default
-    return "Disconnect"
+def find_nearest(nodes: list[tuple[str, float, float]], x: float, y: float) -> str | None:
+    best, best_d = None, math.inf
+    for key, nx, ny in nodes:
+        d = (nx - x) ** 2 + (ny - y) ** 2
+        if d < best_d:
+            best_d, best = d, key
+    return best
 
 
-def norm_xy(x, y):
-    return (round(x, 6), round(y, 6))
+def build_state() -> NetworkState:
+    s = NetworkState()
+    print("กำลังโหลดข้อมูลเครือข่าย…")
+
+    conductor_fc = load_json("psconductor.json")
+    dof_fc       = load_json("DOF.json")
+    recloser_fc  = load_json("psrecloser.json")
+    trans_fc     = load_json("pstrans.json")
+    pscb_fc      = load_json("pscb.json")
+
+    # Conductors
+    for feat in conductor_fc.get("features", []):
+        geom = feat.get("geometry") or {}
+        if geom.get("type") != "LineString": continue
+        coords = geom.get("coordinates", [])
+        if len(coords) < 2: continue
+        props  = feat.get("properties") or {}
+        feeder = str(props.get("FEEDERID", "UNK"))
+        keys: list[str] = []
+        for c in coords:
+            x, y = float(c[0]), float(c[1])
+            k = node_key(x, y)
+            if k not in s.node_xy: s.node_xy[k] = (x, y)
+            keys.append(k)
+            s.node_feeder.setdefault(k, feeder)
+        for i in range(len(keys) - 1):
+            a, b = keys[i], keys[i + 1]
+            if a == b: continue
+            s.adjacency.setdefault(a, set()).add(b)
+            s.adjacency.setdefault(b, set()).add(a)
+        s.conductor_keys.append(keys)
+        s.feeder_edge_count[feeder] = s.feeder_edge_count.get(feeder, 0) + (len(keys) - 1)
+        wgs_coords = [list(to_wgs(float(c[0]), float(c[1]))) for c in coords]
+        s.conductor_wgs.append({
+            "type": "Feature",
+            "geometry": {"type": "LineString", "coordinates": wgs_coords},
+            "properties": {"feeder": feeder, "status": "on", "color": "#888"},
+        })
+
+    s.nodes = [(k, xy[0], xy[1]) for k, xy in s.node_xy.items()]
+    feeders = sorted(s.feeder_edge_count.keys())
+    for i, f in enumerate(feeders):
+        s.feeder_color[f] = FEEDER_PALETTE[i % len(FEEDER_PALETTE)]
+    for cw in s.conductor_wgs:
+        cw["properties"]["color"] = s.feeder_color.get(cw["properties"]["feeder"], "#888")
+
+    # Switches
+    for feat in dof_fc.get("features", []):
+        geom = feat.get("geometry") or {}
+        if geom.get("type") != "Point": continue
+        props = feat.get("properties") or {}
+        fid   = str(props.get("FACILITYID", ""))
+        if not fid or "S" not in fid.upper(): continue
+        x, y   = float(geom["coordinates"][0]), float(geom["coordinates"][1])
+        status  = 0 if int(props.get("PRESENTPOS", 1)) == 0 else 1
+        nearest = find_nearest(s.nodes, x, y)
+        if not nearest: continue
+        feeder  = str(props.get("FEEDERID", s.node_feeder.get(nearest, "UNK")))
+        subtype = int(props.get("SUBTYPECOD", 0))
+        kind    = {5: "Load Break", 3: "Disconnect", 2: "Fuse"}.get(subtype, "Switch")
+        lon, lat = to_wgs(x, y)
+        s.switches.append({
+            "type": "Feature",
+            "geometry": {"type": "Point", "coordinates": [lon, lat]},
+            "properties": {"id": fid, "feeder": feeder, "location": str(props.get("LOCATION", "")),
+                           "state": "CLOSE" if status == 1 else "OPEN", "status": status, "kind": kind},
+        })
+        s.switch_node[fid]   = nearest
+        s.switch_status[fid] = status
+
+    # Substations (source CBs)
+    for feat in pscb_fc.get("features", []):
+        geom = feat.get("geometry") or {}
+        if geom.get("type") != "Point": continue
+        props   = feat.get("properties") or {}
+        fid     = str(props.get("FACILITYID", props.get("TAG", "")))
+        if not fid: continue
+        x, y    = float(geom["coordinates"][0]), float(geom["coordinates"][1])
+        status  = 0 if int(props.get("PRESENTPOS", 1)) == 0 else 1
+        nearest = find_nearest(s.nodes, x, y)
+        if not nearest: continue
+        feeder  = str(props.get("FEEDERID", "UNK"))
+        lon, lat = to_wgs(x, y)
+        s.substations.append({
+            "type": "Feature",
+            "geometry": {"type": "Point", "coordinates": [lon, lat]},
+            "properties": {"id": fid, "feeder": feeder, "location": str(props.get("LOCATION", "")),
+                           "state": "CLOSE" if status == 1 else "OPEN", "status": status,
+                           "tag": str(props.get("TAG", "")), "opVolt": str(props.get("OP_VOLT", ""))},
+        })
+        s.cb_node[fid]    = nearest
+        s.cb_feeder[fid]  = feeder
+        s.cb_status[fid]  = status
+        s.feeder_cbs.setdefault(feeder, set()).add(fid)
+
+    # Reclosers
+    for feat in recloser_fc.get("features", []):
+        geom = feat.get("geometry") or {}
+        if geom.get("type") != "Point": continue
+        props = feat.get("properties") or {}
+        x, y  = float(geom["coordinates"][0]), float(geom["coordinates"][1])
+        lon, lat = to_wgs(x, y)
+        s.reclosers.append({"type": "Feature", "geometry": {"type": "Point", "coordinates": [lon, lat]},
+            "properties": {"id": str(props.get("FACILITYID", props.get("TAG", "RC"))),
+                           "feeder": str(props.get("FEEDERID", "UNK")),
+                           "location": str(props.get("LOCATION", ""))}})
+
+    # Transformers
+    for feat in trans_fc.get("features", []):
+        geom = feat.get("geometry") or {}
+        if geom.get("type") != "Point": continue
+        props = feat.get("properties") or {}
+        x, y  = float(geom["coordinates"][0]), float(geom["coordinates"][1])
+        lon, lat = to_wgs(x, y)
+        s.transformers.append({"type": "Feature", "geometry": {"type": "Point", "coordinates": [lon, lat]},
+            "properties": {"id": str(props.get("FACILITYID", "XF")), "feeder": str(props.get("FEEDERID", "UNK")),
+                           "location": str(props.get("LOCATION", "")),
+                           "rateKva": float(props.get("RATEKVA", 0) or 0),
+                           "owner": str(props.get("OWNER", ""))}})
+
+    print(f"  conductors : {len(s.conductor_keys):,}")
+    print(f"  nodes      : {len(s.nodes):,}")
+    print(f"  switches   : {len(s.switches):,}")
+    print(f"  substations: {len(s.substations):,}")
+    return s
 
 
-def build():
-    global G, NODE_LIST, TREE
-    global SWITCH_STATUS, SWITCH_NODES, SWITCH_META
-    global FEEDER_COLORS, FEEDER_SEGS, SOURCE_NODES
-    global BUILD_OK, BUILD_ERROR
-    global GDF_CONDUCTOR, GDF_DOF, GDF_PSCB, GDF_TRANS, GDF_RECLOSER
-
-    BUILD_OK = False
-    BUILD_ERROR = None
-
-    try:
-        log("BUILD START")
-
-        # ── 1. โหลด psconductor → สร้าง graph + FEEDER_COLORS + FEEDER_SEGS ──
-        GDF_CONDUCTOR = read_layer("psconductor.shp")
-
-        G = nx.Graph()
-        FEEDER_COLORS = {}
-        FEEDER_SEGS   = {}
-
-        for _, row in GDF_CONDUCTOR.iterrows():
-            geom   = row.geometry
-            # อ้างอิง feeder จาก FEEDERID ของ psconductor
-            feeder = str(row.get("FEEDERID") or row.get("FEEDER_ID") or "UNKNOWN").strip()
-
-            if feeder not in FEEDER_COLORS:
-                FEEDER_COLORS[feeder] = COLOR_POOL[len(FEEDER_COLORS) % len(COLOR_POOL)]
-                FEEDER_SEGS[feeder]   = 0
-
-            for line in extract_lines(geom):
-                coords = list(line.coords)
-                FEEDER_SEGS[feeder] += len(coords) - 1
-                for i in range(len(coords) - 1):
-                    a = norm_xy(coords[i][0],   coords[i][1])
-                    b = norm_xy(coords[i+1][0], coords[i+1][1])
-                    G.add_edge(a, b, feeder=feeder)
-
-        NODE_LIST = list(G.nodes())
-        TREE      = KDTree(NODE_LIST)
-
-        SWITCH_NODES = {}
-        SWITCH_META  = {}
-        SOURCE_NODES = []
-
-        # ── 2. DOF → สวิทช์หลัก (FACILITYID, PRESENTPOS) ──────────
-        path = os.path.join(DATA_DIR, "DOF.shp")
-        if os.path.exists(path):
-            GDF_DOF = read_layer("DOF.shp")
-            _load_dof_layer(GDF_DOF)
-
-        # ── 3. psrecloser ──────────────────────────────────────────
-        path = os.path.join(DATA_DIR, "psrecloser.shp")
-        if os.path.exists(path):
-            GDF_RECLOSER = read_layer("psrecloser.shp")
-            _load_point_layer(GDF_RECLOSER, "psrecloser")
-
-        # ── 4. pstrans ─────────────────────────────────────────────
-        path = os.path.join(DATA_DIR, "pstrans.shp")
-        if os.path.exists(path):
-            GDF_TRANS = read_layer("pstrans.shp")
-            _load_point_layer(GDF_TRANS, "pstrans")
-
-        # ── 5. pscb → source nodes (substation) ───────────────────
-        path = os.path.join(DATA_DIR, "pscb.shp")
-        if os.path.exists(path):
-            GDF_PSCB = read_layer("pscb.shp")
-            for _, row in GDF_PSCB.iterrows():
-                geom = row.geometry
-                if geom and geom.geom_type == "Point":
-                    _, idx = TREE.query([geom.x, geom.y])
-                    nearest = (round(NODE_LIST[idx][0], 6), round(NODE_LIST[idx][1], 6))
-                    SOURCE_NODES.append(nearest)
-
-        BUILD_OK = True
-        log(f"nodes={G.number_of_nodes()} edges={G.number_of_edges()} switches={len(SWITCH_NODES)}")
-
-    except Exception:
-        BUILD_ERROR = traceback.format_exc()
-        log(BUILD_ERROR)
+def get_state() -> NetworkState:
+    global _STATE
+    if _STATE is None:
+        _STATE = build_state()
+    return _STATE
 
 
-def _load_dof_layer(gdf):
-    """
-    โหลด DOF.shp โดยอ้างอิง:
-      - FACILITYID  → ชื่อ/ID ของสวิทช์ + infer type
-      - PRESENTPOS  → สถานะ (1=CLOSE, 0=OPEN)
-      - FEEDERID ของ psconductor (ผ่าน graph) → feeder
-    """
-    count = 0
-    for _, row in gdf.iterrows():
-        geom = row.geometry
-        if geom is None or geom.geom_type != "Point":
-            continue
+# ─── Energization (source-aware BFS) ─────────────────────────────────────────
+def compute_energization_ex(
+    adjacency:    dict[str, set[str]],
+    node_feeder:  dict[str, str],
+    cb_node:      dict[str, str],
+    cb_feeder:    dict[str, str],
+    cb_status:    dict[str, int],
+    feeder_cbs:   dict[str, set[str]],
+    switch_node:  dict[str, str],
+    switch_status:dict[str, int],
+    fault_node:   str | None,
+) -> set[str]:
+    """Core BFS energization — accepts explicit parameters so it can be used for simulation."""
+    removed: set[str] = set()
+    if fault_node:
+        removed.add(fault_node)
+    for fid, st in switch_status.items():
+        if st == 0 and fid in switch_node:
+            removed.add(switch_node[fid])
 
-        fid = str(row.get("FACILITYID") or row.get("DEVICEID") or row.get("NAME") or row.get("FID") or "").strip()
-        if not fid:
-            continue
+    feeder_source_off: set[str] = set()
+    for feeder, cb_set in feeder_cbs.items():
+        if all(cb_status.get(fid, 1) == 0 for fid in cb_set):
+            feeder_source_off.add(feeder)
 
-        _, idx   = TREE.query([geom.x, geom.y])
-        nearest  = (round(NODE_LIST[idx][0], 6), round(NODE_LIST[idx][1], 6))
+    source_nodes: set[str] = set()
+    for fid, node in cb_node.items():
+        feeder = cb_feeder.get(fid, "UNK")
+        if cb_status.get(fid, 1) == 1 and node not in removed and feeder not in feeder_source_off:
+            source_nodes.add(node)
 
-        # feeder จาก graph edge ที่ใกล้ที่สุด (psconductor FEEDERID)
-        feeder = ""
-        for _u, _v, _d in G.edges(nearest, data=True):
-            feeder = _d.get("feeder", "UNKNOWN")
-            break
-        if not feeder:
-            feeder = "UNKNOWN"
-
-        location = str(row.get("LOCATION") or row.get("STREETNAME") or row.get("SUBSTATION") or "").strip()
-
-        # ── ประเภทสวิทช์จาก FACILITYID ──
-        sw_type = infer_type_from_facilityid("DOF", fid, dict(row))
-
-        SWITCH_NODES[fid] = nearest
-        SWITCH_META[fid]  = {
-            "type":     sw_type,
-            "feeder":   feeder,
-            "location": location,
-        }
-
-        # ── สถานะจาก PRESENTPOS ──
-        # PRESENTPOS: 1 = CLOSE (ปิด/จ่ายไฟ), 0 = OPEN (เปิด/ตัดวงจร)
-        if fid not in SWITCH_STATUS:
-            try:
-                pos = int(row.get("PRESENTPOS") or 1)
-            except (ValueError, TypeError):
-                pos = 1
-            SWITCH_STATUS[fid] = pos
-
-        count += 1
-    log(f"loaded DOF: {count}")
-
-
-def _load_point_layer(gdf, layer_name):
-    """โหลด psrecloser / pstrans (ไม่มี PRESENTPOS — ถือว่า CLOSE เสมอ)"""
-    count = 0
-    for _, row in gdf.iterrows():
-        geom = row.geometry
-        if geom is None or geom.geom_type != "Point":
-            continue
-
-        fid = str(row.get("FACILITYID") or row.get("DEVICEID") or row.get("NAME") or row.get("FID") or "").strip()
-        if not fid or fid in SWITCH_NODES:
-            continue
-
-        _, idx  = TREE.query([geom.x, geom.y])
-        nearest = (round(NODE_LIST[idx][0], 6), round(NODE_LIST[idx][1], 6))
-
-        feeder = ""
-        for _u, _v, _d in G.edges(nearest, data=True):
-            feeder = _d.get("feeder", "UNKNOWN")
-            break
-        if not feeder:
-            feeder = "UNKNOWN"
-
-        location = str(row.get("LOCATION") or row.get("STREETNAME") or row.get("SUBSTATION") or "").strip()
-        sw_type  = infer_type_from_facilityid(layer_name, fid, dict(row))
-
-        SWITCH_NODES[fid] = nearest
-        SWITCH_META[fid]  = {"type": sw_type, "feeder": feeder, "location": location}
-
-        if fid not in SWITCH_STATUS:
-            try:
-                pos = int(row.get("PRESENTPOS") or 1)
-            except (ValueError, TypeError):
-                pos = 1
-            SWITCH_STATUS[fid] = pos
-
-        count += 1
-    log(f"loaded {layer_name}: {count}")
-
-
-# ── Energization ────────────────────────────────────────────
-def get_energized():
-    G2 = G.copy()
-    if FAULT_NODE and FAULT_NODE in G2:
-        G2.remove_node(FAULT_NODE)
-    for fid, node in SWITCH_NODES.items():
-        if SWITCH_STATUS.get(fid, 1) == 0 and node in G2:
-            G2.remove_node(node)
-    energized = set()
-    if SOURCE_NODES:
-        stack = [n for n in SOURCE_NODES if n in G2]
-        while stack:
-            n = stack.pop()
-            if n in energized:
-                continue
+    energized: set[str] = set()
+    queue: deque[str]   = deque()
+    for n in source_nodes:
+        if n not in removed:
             energized.add(n)
-            for nb in G2.neighbors(n):
-                if nb not in energized:
-                    stack.append(nb)
-    else:
-        for comp in nx.connected_components(G2):
-            energized |= comp
+            queue.append(n)
+    while queue:
+        cur = queue.popleft()
+        for nb in adjacency.get(cur, set()):
+            if nb not in removed and nb not in energized:
+                energized.add(nb)
+                queue.append(nb)
+
+    for k in list(energized):
+        if node_feeder.get(k, "") in feeder_source_off:
+            energized.discard(k)
     return energized
 
 
-# ── Routes ──────────────────────────────────────────────────
-@app.route("/")
-def home():
-    return render_template("indexpro.html")
+def compute_energization(s: NetworkState) -> set[str]:
+    return compute_energization_ex(
+        s.adjacency, s.node_feeder,
+        s.cb_node, s.cb_feeder, s.cb_status, s.feeder_cbs,
+        s.switch_node, s.switch_status, s.fault_node,
+    )
 
 
-@app.route("/api/debug")
-def api_debug():
-    return jsonify({
-        "build_ok":    BUILD_OK,
-        "build_error": BUILD_ERROR,
-        "nodes":       len(NODE_LIST),
-        "edges":       G.number_of_edges(),
-        "switches":    len(SWITCH_NODES),
-        "sources":     len(SOURCE_NODES),
-    })
+def build_live_conductors(s: NetworkState):
+    energized = compute_energization(s)
+    feeders_affected: set[str] = set()
+    feeders_source_open = sorted(
+        feeder for feeder, cb_set in s.feeder_cbs.items()
+        if all(s.cb_status.get(fid, 1) == 0 for fid in cb_set)
+    )
+    out = []
+    for cw, keys in zip(s.conductor_wgs, s.conductor_keys):
+        on = all(k in energized for k in keys)
+        if not on:
+            feeders_affected.add(cw["properties"]["feeder"])
+        out.append({**cw, "properties": {**cw["properties"], "status": "on" if on else "off"}})
+    return out, sorted(feeders_affected), feeders_source_open
 
 
-@app.route("/api/debug_counts")
-def debug_counts():
-    return jsonify({
-        "conductors":   len(GDF_CONDUCTOR) if GDF_CONDUCTOR is not None else 0,
-        "dof":          len(GDF_DOF)       if GDF_DOF       is not None else 0,
-        "recloser":     len(GDF_RECLOSER)  if GDF_RECLOSER  is not None else 0,
-        "transformer":  len(GDF_TRANS)     if GDF_TRANS     is not None else 0,
-        "pscb":         len(GDF_PSCB)      if GDF_PSCB      is not None else 0,
-        "switch_nodes": len(SWITCH_NODES),
-        "graph_nodes":  G.number_of_nodes(),
-        "graph_edges":  G.number_of_edges(),
-    })
+# ─── FISR: Switching Plan Generator ──────────────────────────────────────────
+def bfs_island(
+    start: str,
+    allowed: set[str],
+    adjacency: dict[str, set[str]],
+    removed: set[str],
+) -> set[str]:
+    """BFS through 'allowed' nodes from start."""
+    island: set[str] = set()
+    if start not in allowed or start in removed:
+        return island
+    queue = deque([start])
+    island.add(start)
+    while queue:
+        cur = queue.popleft()
+        for nb in adjacency.get(cur, set()):
+            if nb not in island and nb not in removed and nb in allowed:
+                island.add(nb)
+                queue.append(nb)
+    return island
 
 
-@app.route("/api/conductor")
-def api_conductor():
-    energized = get_energized()
-    features  = []
-    for _, row in GDF_CONDUCTOR.iterrows():
-        geom   = row.geometry
-        feeder = str(row.get("FEEDERID") or row.get("FEEDER_ID") or "UNKNOWN").strip()
-        color  = FEEDER_COLORS.get(feeder, "#888")
-        for line in extract_lines(geom):
-            coords   = [[c[0], c[1]] for c in line.coords]
-            edge_on  = False
-            for i in range(len(coords) - 1):
-                a = norm_xy(coords[i][0],   coords[i][1])
-                b = norm_xy(coords[i+1][0], coords[i+1][1])
-                if a in energized or b in energized:
-                    edge_on = True
-                    break
-            features.append({
-                "type": "Feature",
-                "geometry": {"type": "LineString", "coordinates": coords},
-                "properties": {
-                    "feeder": feeder,
-                    "color":  color,
-                    "status": "on" if edge_on else "off",
-                }
-            })
-    return jsonify({"type": "FeatureCollection", "features": features})
-
-
-@app.route("/api/dof")
-def api_dof():
+def generate_switching_plan(s: NetworkState) -> dict:
     """
-    ใช้ SWITCH_NODES เป็น source of truth ของพิกัด
-    (guaranteed EPSG:4326 และ snap กับ graph แล้ว)
+    Fault Isolation & Service Restoration (FISR) algorithm:
+
+    Phase 1 — Isolation
+      หา closed switches ที่คาบเส้นระหว่างโซนมีไฟ ↔ โซน fault
+      → เปิดสวิตช์เหล่านี้เพื่อกักฟอลต์ไว้ในโซนเล็กที่สุด
+
+    Phase 2 — Restoration
+      หลัง isolation แบ่ง de-energized nodes เป็น islands
+      สำหรับแต่ละ island ที่ไม่มี fault:
+      → หา open switch ที่คาบระหว่าง island ↔ โซนมีไฟ → ปิดสวิตช์
+
+    ผลลัพธ์: ลิสต์ขั้นตอน switching เรียงลำดับ พร้อม nodes_restored ที่คาดการณ์
     """
-    features = []
-    for fid, node in SWITCH_NODES.items():
-        lon, lat = node  # node = (lon, lat) in 4326
-        meta   = SWITCH_META.get(fid, {})
-        status = SWITCH_STATUS.get(fid, 1)
-        features.append({
-            "type": "Feature",
-            "geometry": {"type": "Point", "coordinates": [lon, lat]},
-            "properties": {
-                "id":       fid,
-                "state":    "CLOSE" if status == 1 else "OPEN",
-                "status":   status,
-                "type":     meta.get("type",     "Disconnect"),
-                "feeder":   meta.get("feeder",   "UNKNOWN"),
-                "location": meta.get("location", ""),
-            }
-        })
-    return jsonify({"type": "FeatureCollection", "features": features})
+    if not s.fault_node:
+        return {"error": "ไม่มี fault ที่ active กรุณากดปุ่ม Place fault ก่อน"}
 
+    all_nodes  = set(s.adjacency.keys())
+    energized0 = compute_energization(s)
+    de_nodes0  = all_nodes - energized0
 
-@app.route("/api/dof_debug")
-def api_dof_debug():
-    """Debug: ตรวจสอบว่า switch nodes มีข้อมูลถูกต้องไหม"""
-    sample = []
-    for fid, node in list(SWITCH_NODES.items())[:5]:
-        meta = SWITCH_META.get(fid, {})
-        sample.append({
-            "fid": fid,
-            "node": node,
-            "type": meta.get("type"),
-            "feeder": meta.get("feeder"),
-            "status": SWITCH_STATUS.get(fid),
-        })
-    return jsonify({
-        "total_switches": len(SWITCH_NODES),
-        "sample": sample,
-    })
-
-
-@app.route("/toggle_switch")
-def toggle_switch():
-    fid = request.args.get("id")
-    if fid in SWITCH_STATUS:
-        SWITCH_STATUS[fid] = 1 - SWITCH_STATUS[fid]
-    return jsonify({"ok": True})
-
-
-@app.route("/fault")
-def fault():
-    global FAULT_NODE, FAULT_FEEDER
-    lat = float(request.args.get("lat"))
-    lon = float(request.args.get("lon"))
-    _, idx       = TREE.query([lon, lat])
-    FAULT_NODE   = NODE_LIST[idx]
-    FAULT_FEEDER = "UNKNOWN"
-    for nb in G.neighbors(FAULT_NODE):
-        FAULT_FEEDER = G[FAULT_NODE][nb].get("feeder", "UNKNOWN")
-        break
-    return jsonify({"ok": True, "feeder": FAULT_FEEDER})
-
-
-@app.route("/clear_fault")
-def clear_fault():
-    global FAULT_NODE, FAULT_FEEDER
-    FAULT_NODE   = None
-    FAULT_FEEDER = None
-    return jsonify({"ok": True})
-
-
-@app.route("/api/scada")
-def api_scada():
-    energized    = get_energized()
-    total_nodes  = len(NODE_LIST)
-    nodes_on     = len(energized)
-    nodes_off    = total_nodes - nodes_on
-    pct          = round((nodes_on / total_nodes) * 100, 1) if total_nodes else 0
-    open_switches = sum(1 for v in SWITCH_STATUS.values() if v == 0)
-
-    feeders = {}
-    for feeder, color in FEEDER_COLORS.items():
-        total = 0
-        on    = 0
-        for u, v, d in G.edges(data=True):
-            if d.get("feeder") != feeder:
-                continue
-            total += 1
-            if u in energized or v in energized:
-                on += 1
-        fpct = round((on / total) * 100) if total else 0
-        feeders[feeder] = {
-            "color": color,
-            "pct":   fpct,
-            "segs":  FEEDER_SEGS.get(feeder, total),   # ← จำนวน segments
+    if not de_nodes0:
+        return {
+            "steps": [], "faultFeeder": s.fault_feeder,
+            "deenergizedNodes": 0, "totalRestorable": 0, "nodesIrrecoverable": 0,
+            "summary": "ทุก node มีไฟอยู่แล้ว ไม่ต้องทำ switching",
         }
 
+    # Removed nodes in current state (open switches + fault)
+    removed0: set[str] = set()
+    if s.fault_node:
+        removed0.add(s.fault_node)
+    for fid, st in s.switch_status.items():
+        if st == 0 and fid in s.switch_node:
+            removed0.add(s.switch_node[fid])
+
+    # ── Phase 1: find fault zone ──────────────────────────────────────────────
+    # BFS from fault_node through de-energized territory (find all nodes
+    # that lost power directly because of the fault, not open switches)
+    fault_zone = bfs_island(s.fault_node, de_nodes0 | {s.fault_node}, s.adjacency, removed0 - {s.fault_node})
+
+    # Isolation candidates: CLOSED switches whose switch-node sits between
+    # energized and fault_zone, OR whose switch-node is in fault_zone
+    isolation_candidates: list[str] = []
+    for fid, status in s.switch_status.items():
+        if status != 1:
+            continue
+        node = s.switch_node.get(fid)
+        if not node:
+            continue
+        neighbors = s.adjacency.get(node, set())
+        in_fault   = node in fault_zone
+        near_fault = any(nb in fault_zone for nb in neighbors)
+        near_energ = any(nb in energized0  for nb in neighbors)
+        if (in_fault or near_fault) and near_energ:
+            isolation_candidates.append(fid)
+
+    # Limit isolation to the 2 most-separating switches
+    # (prefer switches in the faulted feeder)
+    isolation_candidates.sort(
+        key=lambda fid: (s.node_feeder.get(s.switch_node.get(fid, ""), "") != s.fault_feeder,)
+    )
+    iso_switches = isolation_candidates[:2]
+
+    steps: list[dict] = []
+    for fid in iso_switches:
+        sw_props = next((sw["properties"] for sw in s.switches if sw["properties"]["id"] == fid), {})
+        steps.append({
+            "action":        "OPEN",
+            "switchId":      fid,
+            "feeder":        sw_props.get("feeder", "?"),
+            "location":      sw_props.get("location", ""),
+            "reason":        "แยกจุดฟอลต์ออกจากระบบ (Fault Isolation)",
+            "nodesRestored": 0,
+        })
+
+    # ── Phase 2: restoration ──────────────────────────────────────────────────
+    # Simulate the post-isolation state
+    sim_sw = dict(s.switch_status)
+    for fid in iso_switches:
+        sim_sw[fid] = 0
+
+    energized_iso = compute_energization_ex(
+        s.adjacency, s.node_feeder,
+        s.cb_node, s.cb_feeder, s.cb_status, s.feeder_cbs,
+        s.switch_node, sim_sw, s.fault_node,
+    )
+    de_iso = all_nodes - energized_iso
+
+    # Removed nodes after isolation
+    removed_iso: set[str] = set()
+    if s.fault_node:
+        removed_iso.add(s.fault_node)
+    for fid, st in sim_sw.items():
+        if st == 0 and fid in s.switch_node:
+            removed_iso.add(s.switch_node[fid])
+
+    # Find de-energized islands (exclude fault zone itself)
+    visited: set[str] = set(fault_zone) | removed_iso
+    restorable: list[dict] = []
+
+    for start in de_iso:
+        if start in visited:
+            continue
+        island = bfs_island(start, de_iso, s.adjacency, removed_iso)
+        if not island:
+            continue
+        visited.update(island)
+
+        # Find an OPEN switch that connects island ↔ energized_iso
+        best_sw   = None
+        best_sw_n = 0  # prefer switches that restore more nodes
+        for fid, st in sim_sw.items():
+            if st != 0:
+                continue
+            node      = s.switch_node.get(fid)
+            if not node:
+                continue
+            neighbors = s.adjacency.get(node, set())
+            in_island   = node in island or any(nb in island   for nb in neighbors)
+            near_energ  = any(nb in energized_iso for nb in neighbors)
+            if in_island and near_energ:
+                if best_sw is None:
+                    best_sw   = fid
+                    best_sw_n = len(island)
+        restorable.append({"island": island, "switch": best_sw, "size": len(island)})
+
+    # Add restoration steps (largest island first)
+    used_switches: set[str] = set()
+    cumulative_sw = dict(sim_sw)  # track state as we add closures
+    cumulative_energized = set(energized_iso)
+
+    for item in sorted(restorable, key=lambda x: -x["size"]):
+        sw_fid = item["switch"]
+        if sw_fid is None or sw_fid in used_switches:
+            continue
+        used_switches.add(sw_fid)
+        cumulative_sw[sw_fid] = 1  # close it
+
+        # Recalculate how many extra nodes this step actually restores
+        new_energized = compute_energization_ex(
+            s.adjacency, s.node_feeder,
+            s.cb_node, s.cb_feeder, s.cb_status, s.feeder_cbs,
+            s.switch_node, cumulative_sw, s.fault_node,
+        )
+        actually_restored = len(new_energized) - len(cumulative_energized)
+        cumulative_energized = new_energized
+
+        sw_props = next((sw["properties"] for sw in s.switches if sw["properties"]["id"] == sw_fid), {})
+        feeder_alt = sw_props.get("feeder", "?")
+        steps.append({
+            "action":        "CLOSE",
+            "switchId":      sw_fid,
+            "feeder":        feeder_alt,
+            "location":      sw_props.get("location", ""),
+            "reason":        f"คืนไฟให้ {actually_restored:,} nodes (Service Restoration)",
+            "nodesRestored": actually_restored,
+        })
+
+    # Number steps
+    for i, step in enumerate(steps):
+        step["step"] = i + 1
+
+    total_restorable   = sum(st["nodesRestored"] for st in steps)
+    nodes_irrecoverable = len(fault_zone)
+    fault_pct = round(nodes_irrecoverable / max(1, len(all_nodes)) * 100, 2)
+
+    return {
+        "steps":             steps,
+        "faultFeeder":       s.fault_feeder,
+        "faultLat":          s.fault_lat,
+        "faultLon":          s.fault_lon,
+        "faultZoneNodes":    nodes_irrecoverable,
+        "faultZonePct":      fault_pct,
+        "deenergizedNodes":  len(de_nodes0),
+        "totalRestorable":   total_restorable,
+        "nodesIrrecoverable": nodes_irrecoverable,
+        "summary": (
+            f"ดับ {len(de_nodes0):,} nodes | "
+            f"fault zone {nodes_irrecoverable:,} nodes ({fault_pct}%) | "
+            f"แผน {len(steps)} ขั้นตอน | "
+            f"คืนไฟได้ {total_restorable:,} nodes"
+        ),
+    }
+
+
+# ─── Flask App ────────────────────────────────────────────────────────────────
+app = Flask(__name__)
+
+
+@app.route("/")
+def index():
+    with open(os.path.join(_HERE, "indexpro.html"), encoding="utf-8") as f:
+        return f.read()
+
+
+# ── Network read endpoints ─────────────────────────────────────────────────────
+
+@app.route("/conductor")
+def conductor():
+    s = get_state()
+    features, _, _ = build_live_conductors(s)
+    return jsonify({"type": "FeatureCollection", "features": features})
+
+
+@app.route("/switches")
+def switches():
+    s = get_state()
+    out = []
+    for sw in s.switches:
+        fid    = sw["properties"]["id"]
+        status = s.switch_status.get(fid, sw["properties"]["status"])
+        out.append({**sw, "properties": {**sw["properties"],
+                    "status": status, "state": "CLOSE" if status == 1 else "OPEN"}})
+    return jsonify({"type": "FeatureCollection", "features": out})
+
+
+@app.route("/reclosers")
+def reclosers():
+    return jsonify({"type": "FeatureCollection", "features": get_state().reclosers})
+
+
+@app.route("/transformers")
+def transformers():
+    return jsonify({"type": "FeatureCollection", "features": get_state().transformers})
+
+
+@app.route("/feeders")
+def feeders():
+    s = get_state()
+    return jsonify({"feeders": [
+        {"id": f, "color": c, "edgeCount": s.feeder_edge_count.get(f, 0)}
+        for f, c in sorted(s.feeder_color.items())
+    ]})
+
+
+@app.route("/substations")
+def substations():
+    s = get_state()
+    out = []
+    for sub in s.substations:
+        fid    = sub["properties"]["id"]
+        status = s.cb_status.get(fid, sub["properties"]["status"])
+        out.append({**sub, "properties": {**sub["properties"],
+                    "status": status, "state": "CLOSE" if status == 1 else "OPEN"}})
+    return jsonify({"type": "FeatureCollection", "features": out})
+
+
+@app.route("/scada")
+def scada():
+    s = get_state()
+    energized = compute_energization(s)
+    _, feeders_affected, feeders_source_open = build_live_conductors(s)
     return jsonify({
-        "nodes_on":       nodes_on,
-        "nodes_off":      nodes_off,
-        "energized_pct":  pct,
-        "open_switches":  open_switches,
-        "total_switches": len(SWITCH_STATUS),
-        "fault_feeder":   FAULT_FEEDER,
-        "feeders":        feeders,
+        "faultActive":      bool(s.fault_node),
+        "faultFeeder":      s.fault_feeder,
+        "switchOpen":       sum(1 for v in s.switch_status.values() if v == 0),
+        "switchTotal":      len(s.switch_status),
+        "cbOpen":           sum(1 for v in s.cb_status.values() if v == 0),
+        "cbTotal":          len(s.cb_status),
+        "nodesOn":          len(energized),
+        "nodesOff":         len(s.adjacency) - len(energized),
+        "feedersAffected":  feeders_affected,
+        "feedersSourceOpen": feeders_source_open,
     })
+
+
+# ── Write endpoints ────────────────────────────────────────────────────────────
+
+@app.route("/switches/<fid>/toggle", methods=["POST"])
+def toggle_switch(fid: str):
+    s = get_state()
+    if fid not in s.switch_node:
+        abort(404)
+    nxt = 0 if s.switch_status.get(fid, 1) == 1 else 1
+    s.switch_status[fid] = nxt
+    return jsonify({"id": fid, "status": nxt, "state": "CLOSE" if nxt == 1 else "OPEN"})
+
+
+@app.route("/substations/<fid>/toggle", methods=["POST"])
+def toggle_substation(fid: str):
+    s = get_state()
+    if fid not in s.cb_node:
+        abort(404)
+    nxt = 0 if s.cb_status.get(fid, 1) == 1 else 1
+    s.cb_status[fid] = nxt
+    return jsonify({"id": fid, "status": nxt, "state": "CLOSE" if nxt == 1 else "OPEN"})
+
+
+@app.route("/fault", methods=["POST"])
+def set_fault():
+    s    = get_state()
+    data = request.get_json(force=True)
+    lat, lon = float(data["lat"]), float(data["lon"])
+    xu, yu   = to_utm(lon, lat)
+    nearest  = find_nearest(s.nodes, xu, yu)
+    if nearest:
+        s.fault_node   = nearest
+        s.fault_feeder = s.node_feeder.get(nearest, "UNK")
+        s.fault_lat    = lat
+        s.fault_lon    = lon
+    return jsonify({"active": bool(s.fault_node), "feeder": s.fault_feeder,
+                    "lat": s.fault_lat, "lon": s.fault_lon})
+
+
+@app.route("/fault", methods=["DELETE"])
+def clear_fault():
+    s = get_state()
+    s.fault_node = s.fault_feeder = s.fault_lat = s.fault_lon = None
+    return jsonify({"active": False, "feeder": None, "lat": None, "lon": None})
+
+
+@app.route("/fault", methods=["GET"])
+def get_fault():
+    s = get_state()
+    return jsonify({"active": bool(s.fault_node), "feeder": s.fault_feeder,
+                    "lat": s.fault_lat, "lon": s.fault_lon})
+
+
+# ── FISR switching plan ────────────────────────────────────────────────────────
+
+@app.route("/switching-plan", methods=["POST"])
+def switching_plan():
+    """
+    วิเคราะห์ switching plan เพื่อลดผู้ได้รับผลกระทบ
+    ไม่ต้องส่ง body — ใช้ state ปัจจุบัน (fault + switch positions)
+    ตอบกลับ JSON: { steps, summary, faultFeeder, deenergizedNodes, totalRestorable, … }
+    """
+    plan = generate_switching_plan(get_state())
+    return jsonify(plan)
+
+
+@app.route("/switching-plan/execute/<int:step_idx>", methods=["POST"])
+def execute_step(step_idx: int):
+    """
+    Execute step N of the most-recently-generated plan.
+    Client sends the step object (action + switchId) directly in the body.
+    """
+    data     = request.get_json(force=True)
+    action   = data.get("action")
+    sw_id    = data.get("switchId")
+    s        = get_state()
+    if not sw_id:
+        abort(400)
+    if sw_id in s.switch_node:
+        s.switch_status[sw_id] = 1 if action == "CLOSE" else 0
+    return jsonify({"ok": True, "switchId": sw_id, "action": action,
+                    "newStatus": s.switch_status.get(sw_id)})
 
 
 if __name__ == "__main__":
-    build()
+    get_state()
+    print("\nเซิร์ฟเวอร์พร้อมใช้งาน → http://localhost:5000\n")
     app.run(host="0.0.0.0", port=5000, debug=False)
