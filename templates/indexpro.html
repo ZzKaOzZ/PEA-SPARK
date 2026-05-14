@@ -2,7 +2,7 @@
 <html lang="th">
 <head>
 <meta charset="utf-8">
-<title>SCADA · Distribution Grid</title>
+<title>PEA SPARK</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
 <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Thai:wght@300;400;500;600&display=swap" rel="stylesheet">
@@ -15,7 +15,7 @@
   --green:#22c55e; --green2:#16a34a;
   --red:#ef4444; --red2:#dc2626;
   --yellow:#f59e0b; --orange:#fb923c;
-  --panel-w:320px; --topbar-h:56px;
+  --panel-w:320px; --topbar-h:72px;
 }
 *{box-sizing:border-box;margin:0;padding:0;}
 body{background:var(--bg);color:var(--text);font-family:'IBM Plex Sans Thai',sans-serif;font-size:13px;overflow:hidden;height:100vh;}
@@ -24,21 +24,15 @@ body{background:var(--bg);color:var(--text);font-family:'IBM Plex Sans Thai',san
 #topbar{
   position:fixed;top:0;left:0;right:0;height:var(--topbar-h);
   background:var(--surface);border-bottom:1px solid var(--border);
-  display:flex;align-items:center;z-index:1000;padding:0;gap:0;
+  display:flex;align-items:center;z-index:1000;padding:0;gap:0;overflow:visible;
 }
 #brand{
   display:flex;align-items:center;gap:10px;
-  padding:0 18px;border-right:1px solid var(--border);
-  height:100%;min-width:270px;flex-shrink:0;
+  padding:0 16px;border-right:1px solid var(--border);
+  height:100%;min-width:260px;flex-shrink:0;
 }
-#brand-icon{
-  width:32px;height:32px;border-radius:8px;
-  background:linear-gradient(135deg,#0ea5e9,#38bdf8);
-  display:flex;align-items:center;justify-content:center;
-  font-size:16px;flex-shrink:0;
-  box-shadow:0 0 12px rgba(56,189,248,.4);
-}
-#brand-text .title{font-weight:600;font-size:13px;letter-spacing:.3px;}
+#brand-logo{height:65px;width:auto;object-fit:contain;display:block;flex-shrink:0;}
+#brand-text .title{font-weight:600;font-size:14px;letter-spacing:.3px;}
 #brand-text .sub{font-size:10px;color:var(--muted);font-family:'IBM Plex Mono',monospace;white-space:nowrap;margin-top:1px;}
 
 /* stat pills */
@@ -256,7 +250,9 @@ body.fault-mode #map{cursor:crosshair!important;}
 <!-- ═══════ TOPBAR ═══════ -->
 <div id="topbar">
   <div id="brand">
-    <div id="brand-icon">⚡</div>
+    <img id="brand-logo" src="{{ url_for('static', filename='logo.png') }}" alt="PEA SPARK"
+         onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
+    <div id="brand-fallback" style="display:none;width:36px;height:36px;border-radius:8px;background:linear-gradient(135deg,#0ea5e9,#38bdf8);align-items:center;justify-content:center;font-size:18px;box-shadow:0 0 12px rgba(56,189,248,.4);flex-shrink:0;">⚡</div>
     <div id="brand-text">
       <div class="title">SCADA · Distribution Grid</div>
       <div class="sub">Provincial Electricity Authority · Live network model</div>
@@ -363,9 +359,10 @@ body.fault-mode #map{cursor:crosshair!important;}
 // ══════════════════════════════════════════════════════════
 var map = L.map('map',{
   zoomControl:true,
-  attributionControl:true,
-  renderer:L.canvas()
+  attributionControl:true
 }).setView([13.75,100.5],13);
+
+var canvasRenderer = L.canvas({padding:0.5});
 
 L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',{maxZoom:20}).addTo(map);
 
@@ -691,7 +688,7 @@ function fetchAll(){
     if(d.error){showBuildError(d.error);return;}
     hideBuildError();
     if(linesLayer) map.removeLayer(linesLayer);
-    linesLayer=L.geoJSON(d,{renderer:L.canvas(),style:styleLines}).addTo(map);
+    linesLayer=L.geoJSON(d,{renderer:canvasRenderer,style:styleLines}).addTo(map);
     if(!didFitBounds && d.features && d.features.length>0){
       try{map.fitBounds(linesLayer.getBounds(),{padding:[20,20]});didFitBounds=true;}catch(e){}
     }
